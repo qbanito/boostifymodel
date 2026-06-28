@@ -128,6 +128,60 @@
       .nav-links a:hover {
         color: var(--fg);
       }
+      /* Hamburger toggle (mobile only) */
+      .nav-toggle {
+        display: none;
+        position: relative;
+        width: 44px;
+        height: 44px;
+        border-radius: 11px;
+        border: 1px solid var(--border);
+        background: var(--surface2);
+        color: var(--fg);
+        cursor: pointer;
+        align-items: center;
+        justify-content: center;
+        flex: none;
+        transition: border-color 0.15s ease, background 0.15s ease;
+      }
+      .nav-toggle:hover {
+        border-color: var(--accent);
+      }
+      .nav-toggle .bars,
+      .nav-toggle .bars::before,
+      .nav-toggle .bars::after {
+        content: "";
+        display: block;
+        position: absolute;
+        left: 50%;
+        width: 20px;
+        height: 2px;
+        margin-left: -10px;
+        background: currentColor;
+        border-radius: 2px;
+        transition: transform 0.25s ease, opacity 0.2s ease;
+      }
+      .nav-toggle .bars {
+        top: 50%;
+        margin-top: -1px;
+      }
+      .nav-toggle .bars::before {
+        top: -7px;
+      }
+      .nav-toggle .bars::after {
+        top: 7px;
+      }
+      header.menu-open .nav-toggle .bars {
+        background: transparent;
+      }
+      header.menu-open .nav-toggle .bars::before {
+        top: 0;
+        transform: rotate(45deg);
+      }
+      header.menu-open .nav-toggle .bars::after {
+        top: 0;
+        transform: rotate(-45deg);
+      }
       .btn {
         display: inline-flex;
         align-items: center;
@@ -765,8 +819,50 @@
         }
       }
       @media (max-width: 760px) {
-        .nav-links a:not(.btn) {
-          display: none;
+        header .wrap {
+          position: relative;
+        }
+        .nav-toggle {
+          display: inline-flex;
+        }
+        .nav-links {
+          position: absolute;
+          top: calc(100% + 14px);
+          right: 0;
+          min-width: 232px;
+          max-width: calc(100vw - 40px);
+          flex-direction: column;
+          align-items: stretch;
+          gap: 4px;
+          padding: 10px;
+          background: var(--surface);
+          border: 1px solid var(--border);
+          border-radius: 14px;
+          box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+          opacity: 0;
+          transform: translateY(-8px);
+          pointer-events: none;
+          transition: opacity 0.2s ease, transform 0.2s ease;
+          z-index: 60;
+        }
+        header.menu-open .nav-links {
+          opacity: 1;
+          transform: none;
+          pointer-events: auto;
+        }
+        .nav-links a {
+          padding: 12px 14px;
+          border-radius: 10px;
+          font-size: 15px;
+          color: var(--fg);
+        }
+        .nav-links a:not(.btn):hover {
+          background: var(--surface2);
+        }
+        .nav-links a.btn {
+          width: 100%;
+          justify-content: center;
+          margin-top: 4px;
         }
         .grid-3,
         .grid-2,
@@ -804,12 +900,22 @@
             </span>
             <span>Boostify <small>MotionDNA</small></span>
           </div>
-          <nav class="nav-links">
+          <nav class="nav-links" id="navLinks">
             <a href="#what">What is it</a>
             <a href="#how">How it works</a>
             <a href="#download">Download</a>
             <a href="#beta" class="btn primary sm">Join Early Access</a>
           </nav>
+          <button
+            type="button"
+            class="nav-toggle"
+            id="navToggle"
+            aria-label="Toggle menu"
+            aria-controls="navLinks"
+            aria-expanded="false"
+          >
+            <span class="bars" aria-hidden="true"></span>
+          </button>
         </div>
       </header>
 
@@ -1258,6 +1364,43 @@
       window.addEventListener("scroll", function () {
         hdr.classList.toggle("scrolled", window.scrollY > 8);
       });
+
+      // Mobile hamburger menu
+      (function () {
+        var toggle = document.getElementById("navToggle");
+        var nav = document.getElementById("navLinks");
+        if (!toggle || !nav) return;
+        var setOpen = function (open) {
+          hdr.classList.toggle("menu-open", open);
+          toggle.setAttribute("aria-expanded", open ? "true" : "false");
+        };
+        toggle.addEventListener("click", function (e) {
+          e.stopPropagation();
+          setOpen(!hdr.classList.contains("menu-open"));
+        });
+        // Close when a link is tapped
+        nav.addEventListener("click", function (e) {
+          if (e.target.closest("a")) setOpen(false);
+        });
+        // Close on outside click
+        document.addEventListener("click", function (e) {
+          if (
+            hdr.classList.contains("menu-open") &&
+            !nav.contains(e.target) &&
+            !toggle.contains(e.target)
+          ) {
+            setOpen(false);
+          }
+        });
+        // Close on Escape
+        document.addEventListener("keydown", function (e) {
+          if (e.key === "Escape") setOpen(false);
+        });
+        // Reset when resizing back to desktop
+        window.addEventListener("resize", function () {
+          if (window.innerWidth > 760) setOpen(false);
+        });
+      })();
 
       // Highlight the download button matching the visitor's OS.
       (function () {
