@@ -88,8 +88,14 @@ pub fn resolve_key(settings: &AppSettings) -> String {
 
 /// HF Inference Providers router endpoint for Wan 2.2 image-to-video (fal-ai).
 /// Returns `{"video":{"url":"https://…mp4"}}` synchronously (HTTP 200).
-const HF_I2V_URL: &str =
-    "https://router.huggingface.co/fal-ai/fal-ai/wan/v2.2-a14b/image-to-video";
+///
+/// Endpoints are tried best-first: LTX-2 19B distilled (newest, highest
+/// quality, even renders an ambient soundtrack) → Wan 2.2 A14B as a resilient
+/// fallback if LTX is unavailable / out of credits.
+const HF_I2V_URLS: &[&str] = &[
+    "https://router.huggingface.co/fal-ai/fal-ai/ltx-2-19b/distilled/image-to-video",
+    "https://router.huggingface.co/fal-ai/fal-ai/wan/v2.2-a14b/image-to-video",
+];
 
 /// Resolve the Hugging Face token: explicit settings value wins, else env vars.
 pub fn resolve_hf_token(settings: &AppSettings) -> String {
@@ -108,10 +114,11 @@ pub fn resolve_hf_token(settings: &AppSettings) -> String {
     String::new()
 }
 
-/// Animate a still into REAL AI motion via Hugging Face Inference Providers
-/// (Wan 2.2 image-to-video on fal-ai). Returns the downloaded MP4 bytes, or
-/// `None` when the token is missing / credits are exhausted / the call fails —
-/// in which case the caller falls back to the local Ken Burns animation.
+/// Animate a still into REAL AI motion via Hugging Face Inference Providers.
+/// Tries LTX-2 19B distilled first (newest, best), then Wan 2.2 as a fallback.
+/// Returns the downloaded MP4 bytes, or `None` when the token is missing /
+/// credits are exhausted / every endpoint fails — in which case the caller
+/// falls back to the local Ken Burns animation.
 pub fn image_to_video_hf(token: &str, png: &[u8], prompt: &str) -> Option<Vec<u8>> {
     let token = token.trim();
     if token.is_empty() {
@@ -128,12 +135,24 @@ pub fn image_to_video_hf(token: &str, png: &[u8], prompt: &str) -> Option<Vec<u8
     };
     let body = json!({ "image_url": data_url, "prompt": motion });
 
-    let resp = ureq::post(HF_I2V_URL)
+    // Best-first: LTX-2 → Wan 2.2. Return on the first model that succeeds.
+    for url in HF_I2V_URLS {
+        if let Some(mp4) = hf_i2v_call(url, token, &body) {
+            return Some(mp4);
+        }
+    }
+    None
+}
+
+/// POST one image-to-video request to an HF Inference Providers router endpoint
+/// and download the resulting MP4. `None` on any error (caller tries the next).
+fn hf_i2v_call(url: &str, token: &str, body: &Value) -> Option<Vec<u8>> {
+    let resp = ureq::post(url)
         .set("Authorization", &format!("Bearer {token}"))
         .set("Content-Type", "application/json")
         .set("Accept", "application/json")
         .timeout(Duration::from_secs(300))
-        .send_json(body);
+        .send_json(body.clone());
 
     let v: Value = match resp {
         Ok(r) => r.into_json().ok()?,
@@ -144,23 +163,23 @@ pub fn image_to_video_hf(token: &str, png: &[u8], prompt: &str) -> Option<Vec<u8
                 .chars()
                 .take(400)
                 .collect::<String>();
-            eprintln!("[hf-i2v] HTTP {code}: {detail}");
+            eprintln!("[hf-i2v] {url} HTTP {code}: {detail}");
             return None;
         }
         Err(e) => {
-            eprintln!("[hf-i2v] request failed: {e}");
+            eprintln!("[hf-i2v] {url} request failed: {e}");
             return None;
         }
     };
 
-    let url = v
+    let dl_url = v
         .pointer("/video/url")
         .and_then(|x| x.as_str())
         .or_else(|| v.pointer("/url").and_then(|x| x.as_str()))?;
 
     // Download the produced MP4.
     use std::io::Read;
-    let dl = ureq::get(url).timeout(Duration::from_secs(180)).call().ok()?;
+    let dl = ureq::get(dl_url).timeout(Duration::from_secs(180)).call().ok()?;
     let mut buf = Vec::new();
     dl.into_reader()
         .take(200_000_000)
