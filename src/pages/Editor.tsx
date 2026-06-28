@@ -789,7 +789,7 @@ export function Editor() {
     }
   };
 
-
+  const insertBroll = async (c: BrollCandidate) => {
     if (!active) return;
     try {
       await api.insertBroll(c.id);
