@@ -35,3 +35,7 @@ dist-ssr
 .env
 .env.local
 .env.*.local
+
+# Remotion build artifacts (source-controlled output lives in landing/assets)
+/remotion/out
+/remotion/public

@@ -167,6 +167,128 @@
       .hero {
         text-align: center;
         padding: 84px 0 40px;
+        position: relative;
+        z-index: 1;
+      }
+      /* Full-bleed looping motion background behind the hero */
+      .hero-bg {
+        position: absolute;
+        left: 50%;
+        top: -40px;
+        transform: translateX(-50%);
+        width: 100vw;
+        height: calc(100% + 120px);
+        z-index: -1;
+        overflow: hidden;
+        pointer-events: none;
+        -webkit-mask-image: radial-gradient(
+          120% 100% at 50% 35%,
+          #000 45%,
+          transparent 80%
+        );
+        mask-image: radial-gradient(
+          120% 100% at 50% 35%,
+          #000 45%,
+          transparent 80%
+        );
+      }
+      .hero-bg video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        opacity: 0.5;
+      }
+      /* ---- Promo video showcase ---- */
+      .showcase {
+        position: relative;
+        max-width: 940px;
+        margin: 8px auto 0;
+        border-radius: 20px;
+        overflow: hidden;
+        border: 1px solid var(--border);
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5),
+          0 0 0 1px rgba(255, 106, 43, 0.08);
+        background: #000;
+      }
+      .showcase video {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+      .showcase .ring {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        border-radius: 20px;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+      }
+      /* ---- Media (panel + cards) ---- */
+      .media-frame {
+        border-radius: 14px;
+        overflow: hidden;
+        border: 1px solid var(--border);
+        margin-bottom: 18px;
+        background: #000;
+      }
+      .media-frame img {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+      .card-media {
+        border-radius: 12px;
+        overflow: hidden;
+        margin: -4px 0 16px;
+        aspect-ratio: 16 / 10;
+        background: #000;
+      }
+      .card-media img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+        transition: transform 0.4s ease;
+      }
+      .card:hover .card-media img {
+        transform: scale(1.06);
+      }
+      /* ---- Image gallery ---- */
+      .gallery {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+        max-width: 900px;
+        margin: 8px auto 36px;
+      }
+      .gallery figure {
+        margin: 0;
+        border-radius: 14px;
+        overflow: hidden;
+        border: 1px solid var(--border);
+        background: #000;
+        aspect-ratio: 1 / 1;
+      }
+      .gallery img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+        transition: transform 0.5s ease;
+      }
+      .gallery figure:hover img {
+        transform: scale(1.07);
+      }
+      @media (max-width: 720px) {
+        .gallery {
+          grid-template-columns: 1fr;
+          max-width: 380px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .hero-bg video,
+        .showcase video {
+          display: none;
+        }
       }
       .pill {
         display: inline-flex;
@@ -694,6 +816,16 @@
       <div class="wrap">
         <!-- HERO -->
         <section class="hero">
+          <div class="hero-bg">
+            <video
+              src="assets/hero-loop.mp4"
+              poster="assets/hero-poster.jpg"
+              autoplay
+              muted
+              loop
+              playsinline
+            ></video>
+          </div>
           <span class="pill"><span class="dot"></span> Closed beta · Launching Q2 2026</span>
           <h1>
             The Motion Model Trained on<br />
@@ -731,6 +863,22 @@
               <div class="v">Q2 2026</div>
               <div class="k">Launch</div>
             </div>
+          </div>
+        </section>
+
+        <!-- PROMO SHOWCASE -->
+        <section class="block" style="padding-top: 18px">
+          <div class="showcase">
+            <video
+              src="assets/promo.mp4"
+              poster="assets/hero-poster.jpg"
+              autoplay
+              muted
+              loop
+              playsinline
+              controls
+            ></video>
+            <div class="ring"></div>
           </div>
         </section>
 
@@ -795,6 +943,13 @@
               </ul>
             </div>
             <div class="panel">
+              <div class="media-frame">
+                <img
+                  src="assets/motion-panel.png"
+                  alt="Motion-capture point cloud of a performer"
+                  loading="lazy"
+                />
+              </div>
               <p style="margin: 0 0 18px; font-size: 14px; color: var(--muted)">
                 That knowledge becomes a model Boostify applies to your
                 AI-generated videos — making them look like music videos
@@ -925,6 +1080,17 @@
         <section class="block">
           <p class="eyebrow">Use cases</p>
           <h2>What you can create with MotionDNA</h2>
+          <div class="gallery">
+            <figure>
+              <img src="assets/usecase-music.png" alt="AI-generated stage performance" loading="lazy" />
+            </figure>
+            <figure>
+              <img src="assets/usecase-dance.png" alt="Motion-capture choreography" loading="lazy" />
+            </figure>
+            <figure>
+              <img src="assets/usecase-camera.png" alt="Cinematic camera tracking a performer" loading="lazy" />
+            </figure>
+          </div>
           <div class="feat">
             <div class="item">
               <span class="tick"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 5v14l11-7z"/></svg></span>

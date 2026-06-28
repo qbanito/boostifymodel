@@ -1,0 +1,21 @@
+{
+  "name": "boostify-motiondna-remotion",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Remotion animations for the Boostify MotionDNA landing page.",
+  "scripts": {
+    "start": "remotion studio",
+    "render": "remotion render HeroPromo out/promo.mp4 --codec=h264",
+    "render:loop": "remotion render HeroLoop out/hero-loop.mp4 --codec=h264"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.290",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "remotion": "4.0.290"
+  },
+  "devDependencies": {
+    "@types/react": "19.0.0",
+    "typescript": "5.5.4"
+  }
+}
