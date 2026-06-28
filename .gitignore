@@ -9,6 +9,9 @@ dist
 dist-ssr
 *.local
 
+# Build artifacts
+*.tsbuildinfo
+
 # Editor
 .vscode/*
 !.vscode/extensions.json
