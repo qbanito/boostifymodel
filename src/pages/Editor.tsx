@@ -83,6 +83,9 @@ export function Editor() {
   const [datasetProgress, setDatasetProgress] = useState<BrollProgress | null>(
     null
   );
+  const [mvGenerating, setMvGenerating] = useState(false);
+  const [mvProgress, setMvProgress] = useState<BrollProgress | null>(null);
+  const [mvPath, setMvPath] = useState<string | null>(null);
   const [profile, setProfile] = useState<EditProfile | null>(null);
   const [broll, setBroll] = useState<BrollCandidate[]>([]);
   const [style, setStyle] = useState<StyleReference | null>(null);
@@ -228,6 +231,28 @@ export function Editor() {
         if (activeId != null && p.sessionId === activeId) {
           setDatasetProgress(p.done ? null : p);
           if (p.done) setDatasetSending(false);
+        }
+      })
+      .then((u) => {
+        un = u;
+      });
+    return () => {
+      mounted = false;
+      un?.();
+    };
+  }, [activeId]);
+
+  // Subscribe to AI music-video generation progress.
+  useEffect(() => {
+    setMvPath(null);
+    let mounted = true;
+    let un: (() => void) | null = null;
+    api
+      .onMusicVideoProgress((p) => {
+        if (!mounted) return;
+        if (activeId != null && p.sessionId === activeId) {
+          setMvProgress(p.done ? null : p);
+          if (p.done) setMvGenerating(false);
         }
       })
       .then((u) => {
@@ -409,6 +434,25 @@ export function Editor() {
     } catch (e) {
       setDatasetSending(false);
       setDatasetProgress(null);
+      push("error", String(e));
+    }
+  };
+
+  const generateMv = async () => {
+    if (!active) return;
+    if (!analysis) {
+      push("error", "Analyze the master beats first");
+      return;
+    }
+    setMvGenerating(true);
+    setMvPath(null);
+    try {
+      const path = await api.generateMusicVideo(active.id);
+      setMvPath(path);
+      push("success", "AI music video generated — playing below.");
+    } catch (e) {
+      setMvGenerating(false);
+      setMvProgress(null);
       push("error", String(e));
     }
   };
@@ -653,6 +697,24 @@ export function Editor() {
               Send to dataset
             </Button>
             <Button
+              variant="default"
+              size="sm"
+              onClick={generateMv}
+              disabled={mvGenerating || !analysis}
+              title={
+                analysis
+                  ? "Generate a full AI music video from the song (our own image+audio workflow)"
+                  : "Analyze the master beats first"
+              }
+            >
+              {mvGenerating ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Clapperboard className="h-4 w-4" />
+              )}
+              Generate music video
+            </Button>
+            <Button
               variant="ghost"
               size="sm"
               onClick={() => loadMedia(active.id)}
@@ -782,6 +844,32 @@ export function Editor() {
                   <span className="ml-auto tabular-nums">
                     {datasetProgress.processed}/{datasetProgress.total}
                   </span>
+                </div>
+              )}
+
+              {mvProgress && (
+                <div className="flex items-center gap-2 border-b border-bds-border bg-bds-surface/60 px-4 py-2 text-xs text-bds-muted">
+                  <Clapperboard className="h-3.5 w-3.5 animate-pulse text-bds-accent" />
+                  <span className="truncate">{mvProgress.message}</span>
+                  <span className="ml-auto tabular-nums">
+                    {mvProgress.processed}/{mvProgress.total}
+                  </span>
+                </div>
+              )}
+
+              {mvPath && (
+                <div className="border-b border-bds-border bg-black/40 p-4">
+                  <div className="mb-2 flex items-center gap-2 text-xs text-bds-muted">
+                    <Clapperboard className="h-3.5 w-3.5 text-bds-accent" />
+                    <span>AI music video</span>
+                  </div>
+                  <video
+                    key={mvPath}
+                    src={convertFileSrc(mvPath)}
+                    controls
+                    playsInline
+                    className="w-full max-h-[60vh] rounded-lg bg-black"
+                  />
                 </div>
               )}
 

@@ -6,6 +6,7 @@ mod editor;
 mod genai;
 mod gpu_server;
 mod models;
+mod mvgen;
 mod pipeline;
 mod premiere;
 mod probe;
@@ -674,6 +675,121 @@ fn generate_broll(
     db::list_broll(&conn, session_id).map_err(|e| e.to_string())
 }
 
+/// Generate a full music video for the session with our own Boostify workflow:
+/// the analyzed master (sections/beats) drives a beat-aligned storyboard, each
+/// shot is rendered as an on-brand NVIDIA FLUX still, animated locally into a
+/// moving clip, then all shots + the master audio are assembled into one MP4.
+/// Returns the path of the final video. Emits `mvgen:progress` events.
+#[tauri::command]
+fn generate_music_video(
+    session_id: i64,
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<String, String> {
+    let (session, media, analysis, settings) = {
+        let conn = state.conn.lock().unwrap();
+        let session = db::get_session(&conn, session_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "session not found".to_string())?;
+        let media = db::list_session_media(&conn, session_id).map_err(|e| e.to_string())?;
+        let analysis = db::get_session_analysis(&conn, session_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "analyze the master audio first".to_string())?;
+        let settings = state.load_settings(&conn);
+        (session, media, analysis, settings)
+    };
+
+    let key = genai::resolve_key(&settings);
+    if key.is_empty() {
+        return Err("Add an NVIDIA API key in Settings to generate the music video.".into());
+    }
+
+    let master = media
+        .iter()
+        .find(|m| m.role == "master")
+        .map(|m| m.path.clone());
+
+    let style = genai::build_style_reference(&session, &media, 6);
+    let shots = mvgen::plan_shots(&style, &analysis);
+    let total = shots.len() as u64;
+
+    let out_dir = state
+        .work_dir()
+        .join("mvgen")
+        .join(session_id.to_string())
+        .join(nanos().to_string());
+    std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+
+    let emit = |stage: &str, message: String, processed: u64, done: bool| {
+        let _ = app.emit(
+            "mvgen:progress",
+            serde_json::json!({
+                "sessionId": session_id,
+                "stage": stage,
+                "message": message,
+                "processed": processed,
+                "total": total,
+                "done": done,
+            }),
+        );
+    };
+
+    let mut clips: Vec<std::path::PathBuf> = Vec::new();
+    for shot in &shots {
+        emit(
+            "generate",
+            format!("Shot {}/{}: {}", shot.index + 1, total, shot.idea),
+            shot.index as u64,
+            false,
+        );
+
+        let png = match genai::generate_image(&key, &shot.prompt, shot.seed) {
+            Some(p) => p,
+            None => continue,
+        };
+        let img_path = out_dir.join(format!("shot_{:03}.png", shot.index));
+        if std::fs::write(&img_path, &png).is_err() {
+            continue;
+        }
+
+        emit(
+            "animate",
+            format!("Animating shot {}/{}…", shot.index + 1, total),
+            shot.index as u64,
+            false,
+        );
+        let clip_path = out_dir.join(format!("shot_{:03}.mp4", shot.index));
+        if genai::animate_still_local(
+            &img_path,
+            &clip_path,
+            shot.duration,
+            session.sequence_fps,
+            shot.motion,
+        ) {
+            clips.push(clip_path);
+        }
+    }
+
+    if clips.is_empty() {
+        return Err("No shots were generated (check the NVIDIA key/quota).".into());
+    }
+
+    emit("assemble", "Assembling the final music video…".into(), total, false);
+    let final_path = out_dir.join("music_video.mp4");
+    let audio_ref = master.as_deref().map(std::path::Path::new);
+    if !mvgen::assemble(&clips, audio_ref, &final_path, session.sequence_fps) {
+        return Err("Failed to assemble the final video.".into());
+    }
+
+    emit("done", "Music video ready".into(), total, true);
+    log(
+        &app,
+        format!("Generated music video for session {session_id}: {} shots", clips.len()),
+    );
+
+    Ok(final_path.to_string_lossy().to_string())
+}
+
 #[tauri::command]
 fn list_broll(
     session_id: i64,
@@ -1287,6 +1403,7 @@ pub fn run() {
             record_edit_feedback,
             capture_style_reference,
             generate_broll,
+            generate_music_video,
             list_broll,
             insert_broll,
             delete_broll,

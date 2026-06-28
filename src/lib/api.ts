@@ -263,6 +263,10 @@ export const api = {
     return invoke("animate_broll", { candidateId });
   },
 
+  generateMusicVideo(sessionId: number): Promise<string> {
+    return invoke("generate_music_video", { sessionId });
+  },
+
   syncPerformanceAudio(sessionId: number): Promise<SessionMedia[]> {
     return invoke("sync_performance_audio", { sessionId });
   },
@@ -273,6 +277,10 @@ export const api = {
 
   onBrollProgress(cb: (p: BrollProgress) => void): Promise<UnlistenFn> {
     return listen<BrollProgress>("broll:progress", (e) => cb(e.payload));
+  },
+
+  onMusicVideoProgress(cb: (p: BrollProgress) => void): Promise<UnlistenFn> {
+    return listen<BrollProgress>("mvgen:progress", (e) => cb(e.payload));
   },
 
   onSyncProgress(cb: (p: BrollProgress) => void): Promise<UnlistenFn> {
