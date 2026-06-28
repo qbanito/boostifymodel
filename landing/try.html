@@ -1,0 +1,940 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Try MotionDNA — Boostify</title>
+    <meta
+      name="description"
+      content="Test the Boostify MotionDNA motion model. Sign in to access the private playground and turn a prompt into synthesized motion."
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ff6a2b'/%3E%3Cstop offset='1' stop-color='%23ffb02e'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Cpath d='M8 20c2-8 4-8 6 0s4 8 6 0' fill='none' stroke='%230b0d10' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+    />
+    <style>
+      :root {
+        --bg: #0b0d10;
+        --surface: #121519;
+        --surface2: #171b21;
+        --border: #232932;
+        --fg: #e7ecf2;
+        --muted: #8b97a6;
+        --accent: #ff6a2b;
+        --accent2: #ffb02e;
+        --good: #39d98a;
+        --info: #4ea8ff;
+        --warn: #ffb02e;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          system-ui, sans-serif;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+        min-height: 100vh;
+      }
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+      .glow {
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        background:
+          radial-gradient(
+            700px 460px at 72% -10%,
+            rgba(255, 106, 43, 0.18),
+            transparent 60%
+          ),
+          radial-gradient(
+            560px 380px at 8% 6%,
+            rgba(255, 176, 46, 0.09),
+            transparent 60%
+          );
+      }
+      .content {
+        position: relative;
+        z-index: 1;
+      }
+      .wrap {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 0 24px;
+      }
+      /* Header */
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 18px 0;
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        background: rgba(11, 13, 16, 0.82);
+        backdrop-filter: saturate(140%) blur(12px);
+        border-bottom: 1px solid var(--border);
+        flex-wrap: wrap;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        font-size: 16px;
+      }
+      .logo {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        background: linear-gradient(135deg, var(--accent), var(--accent2));
+        display: grid;
+        place-items: center;
+        box-shadow: 0 8px 24px rgba(255, 106, 43, 0.35);
+        flex: none;
+      }
+      .brand small {
+        display: block;
+        font-weight: 500;
+        font-size: 11px;
+        color: var(--muted);
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .head-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .head-actions a.ghost {
+        color: var(--muted);
+        font-size: 14px;
+        padding: 8px 10px;
+      }
+      .head-actions a.ghost:hover {
+        color: var(--fg);
+      }
+      /* Buttons */
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 9px;
+        padding: 11px 18px;
+        border-radius: 11px;
+        font-size: 14px;
+        font-weight: 600;
+        border: 1px solid var(--border);
+        background: var(--surface2);
+        color: var(--fg);
+        cursor: pointer;
+        transition: transform 0.15s ease, border-color 0.15s ease,
+          box-shadow 0.2s ease, opacity 0.15s ease;
+        font-family: inherit;
+      }
+      .btn:hover {
+        transform: translateY(-1px);
+        border-color: #313a47;
+      }
+      .btn.primary {
+        background: linear-gradient(135deg, var(--accent), var(--accent2));
+        border-color: transparent;
+        color: #0b0d10;
+        box-shadow: 0 10px 30px rgba(255, 106, 43, 0.3);
+      }
+      .btn.primary:hover {
+        box-shadow: 0 14px 38px rgba(255, 106, 43, 0.42);
+      }
+      .btn.sm {
+        padding: 9px 14px;
+        font-size: 13px;
+      }
+      .btn:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+        transform: none;
+      }
+      /* Layout */
+      main {
+        padding: 40px 0 64px;
+      }
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--accent2);
+        font-weight: 600;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        border-radius: 999px;
+        padding: 6px 13px;
+        margin-bottom: 18px;
+      }
+      h1 {
+        font-size: clamp(28px, 5vw, 44px);
+        line-height: 1.08;
+        letter-spacing: -0.03em;
+        margin: 0 0 12px;
+      }
+      .lead {
+        color: var(--muted);
+        font-size: 17px;
+        max-width: 620px;
+        margin: 0 0 30px;
+      }
+      /* Locked / gate */
+      .gate {
+        border: 1px solid var(--border);
+        background:
+          radial-gradient(
+            600px 300px at 80% -40%,
+            rgba(255, 106, 43, 0.12),
+            transparent 70%
+          ),
+          var(--surface);
+        border-radius: 20px;
+        padding: 44px 32px;
+        text-align: center;
+        max-width: 560px;
+        margin: 8px auto 0;
+      }
+      .gate .lock {
+        width: 64px;
+        height: 64px;
+        border-radius: 16px;
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        display: grid;
+        place-items: center;
+        margin: 0 auto 20px;
+        color: var(--accent2);
+      }
+      .gate h2 {
+        margin: 0 0 8px;
+        font-size: 22px;
+      }
+      .gate p {
+        margin: 0 0 24px;
+        color: var(--muted);
+      }
+      .gate .row {
+        display: flex;
+        gap: 12px;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+      /* Playground */
+      .studio {
+        display: grid;
+        grid-template-columns: 360px 1fr;
+        gap: 22px;
+        align-items: start;
+      }
+      .card {
+        border: 1px solid var(--border);
+        background: var(--surface);
+        border-radius: 18px;
+        padding: 22px;
+      }
+      .card h3 {
+        margin: 0 0 4px;
+        font-size: 16px;
+      }
+      .card .hint {
+        margin: 0 0 18px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      label.field {
+        display: block;
+        margin-bottom: 16px;
+      }
+      label.field > span {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 7px;
+        color: var(--fg);
+      }
+      textarea,
+      select,
+      input[type="text"] {
+        width: 100%;
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        border-radius: 11px;
+        color: var(--fg);
+        padding: 11px 13px;
+        font-size: 14px;
+        font-family: inherit;
+        resize: vertical;
+        transition: border-color 0.15s ease;
+      }
+      textarea:focus,
+      select:focus,
+      input:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+      textarea {
+        min-height: 84px;
+      }
+      .slider-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 7px;
+      }
+      .slider-row .val {
+        color: var(--accent2);
+      }
+      input[type="range"] {
+        width: 100%;
+        accent-color: var(--accent);
+      }
+      .stage-wrap {
+        border: 1px solid var(--border);
+        background: var(--surface);
+        border-radius: 18px;
+        overflow: hidden;
+      }
+      .stage {
+        position: relative;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        background:
+          radial-gradient(
+            520px 320px at 50% 18%,
+            rgba(255, 106, 43, 0.1),
+            transparent 70%
+          ),
+          #0a0c0f;
+      }
+      .stage canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      .stage .badge {
+        position: absolute;
+        top: 14px;
+        left: 14px;
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--muted);
+        background: rgba(11, 13, 16, 0.6);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 5px 11px;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--good);
+        box-shadow: 0 0 10px var(--good);
+      }
+      .stage-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 16px;
+        border-top: 1px solid var(--border);
+        flex-wrap: wrap;
+      }
+      .chips {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .chip {
+        font-size: 12px;
+        color: var(--fg);
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 5px 11px;
+      }
+      .chip b {
+        color: var(--accent2);
+        font-weight: 700;
+      }
+      .stage-bar .controls {
+        display: flex;
+        gap: 8px;
+      }
+      .note {
+        margin-top: 18px;
+        font-size: 13px;
+        color: var(--muted);
+        text-align: center;
+      }
+      .note a {
+        color: var(--accent2);
+      }
+      /* Config / preview banner */
+      .banner {
+        border: 1px solid #4a3a1a;
+        background: rgba(255, 176, 46, 0.08);
+        color: #ffd9a0;
+        border-radius: 14px;
+        padding: 14px 16px;
+        font-size: 13.5px;
+        margin-bottom: 24px;
+        display: flex;
+        gap: 11px;
+        align-items: flex-start;
+      }
+      .banner code {
+        background: rgba(0, 0, 0, 0.35);
+        padding: 1px 6px;
+        border-radius: 5px;
+        font-size: 12.5px;
+      }
+      .hidden {
+        display: none !important;
+      }
+      #user-button {
+        display: flex;
+        align-items: center;
+      }
+      .greet {
+        font-size: 14px;
+        color: var(--muted);
+      }
+      .greet b {
+        color: var(--fg);
+      }
+      footer {
+        border-top: 1px solid var(--border);
+        padding: 26px 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      @media (max-width: 860px) {
+        .studio {
+          grid-template-columns: 1fr;
+        }
+      }
+      @media (max-width: 560px) {
+        header {
+          padding: 14px 0;
+        }
+        .head-actions a.ghost {
+          display: none;
+        }
+        main {
+          padding: 28px 0 48px;
+        }
+        .gate {
+          padding: 34px 20px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="glow"></div>
+    <div class="content">
+      <header>
+        <div class="wrap" style="display: flex; align-items: center; justify-content: space-between; padding: 0; width: 100%; gap: 14px; flex-wrap: wrap">
+          <a class="brand" href="index.html" aria-label="Boostify MotionDNA home">
+            <span class="logo" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 32 32" fill="none">
+                <path d="M8 20c2-8 4-8 6 0s4 8 6 0" stroke="#0b0d10" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+            <span>Boostify <small>MotionDNA</small></span>
+          </a>
+          <div class="head-actions">
+            <a class="ghost" href="index.html">← Back to site</a>
+            <!-- Signed-out controls -->
+            <span id="auth-out" class="head-actions hidden">
+              <button class="btn sm" id="btn-signin" type="button">Sign in</button>
+              <button class="btn sm primary" id="btn-signup" type="button">Sign up</button>
+            </span>
+            <!-- Signed-in controls -->
+            <span id="auth-in" class="head-actions hidden">
+              <span class="greet" id="greet"></span>
+              <span id="user-button"></span>
+            </span>
+            <!-- Preview (Clerk not configured) -->
+            <span id="auth-preview" class="head-actions hidden">
+              <span class="chip">Preview mode</span>
+            </span>
+          </div>
+        </div>
+      </header>
+
+      <main class="wrap">
+        <span class="eyebrow">Private playground</span>
+        <h1>Test the MotionDNA model</h1>
+        <p class="lead">
+          Describe a performance and the motion model synthesizes a movement
+          preview — choreography, energy and stage presence from a single prompt.
+        </p>
+
+        <!-- Banner shown only in preview mode (Clerk publishable key not set) -->
+        <div id="config-banner" class="banner hidden">
+          <span aria-hidden="true">⚙️</span>
+          <span>
+            <b>Preview mode.</b> Clerk access control is not active yet. To gate
+            this page behind sign-in, open <code>landing/try.html</code> and set
+            your <code>CLERK_PUBLISHABLE_KEY</code> (find it in the Clerk
+            Dashboard → API Keys, or run <code>clerk auth login</code>). The
+            publishable key is safe to expose in client code.
+          </span>
+        </div>
+
+        <!-- Locked gate (signed out) -->
+        <section id="gate" class="gate hidden">
+          <div class="lock" aria-hidden="true">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="10" rx="2" />
+              <path d="M7 11V8a5 5 0 0 1 10 0v3" />
+            </svg>
+          </div>
+          <h2>Sign in to access the playground</h2>
+          <p>Access to the MotionDNA model is granted to approved accounts. Sign in or create an account to continue.</p>
+          <div class="row">
+            <button class="btn primary" id="gate-signin" type="button">Sign in</button>
+            <button class="btn" id="gate-signup" type="button">Create account</button>
+          </div>
+        </section>
+
+        <!-- Playground (signed in / preview) -->
+        <section id="studio" class="studio hidden">
+          <div class="card">
+            <h3>Prompt</h3>
+            <p class="hint">Describe the artist, mood and movement.</p>
+            <label class="field">
+              <span>Performance prompt</span>
+              <textarea id="prompt" placeholder="e.g. energetic afrobeats artist dancing under stage lights, confident hip movement">energetic pop artist dancing under stage lights, confident and rhythmic</textarea>
+            </label>
+            <label class="field">
+              <span>Style</span>
+              <select id="style">
+                <option value="pop">Pop / stage</option>
+                <option value="afrobeats">Afrobeats</option>
+                <option value="hiphop">Hip-hop</option>
+                <option value="rnb">R&amp;B / smooth</option>
+                <option value="rock">Rock</option>
+                <option value="electronic">Electronic</option>
+                <option value="ballad">Ballad / cinematic</option>
+              </select>
+            </label>
+            <label class="field">
+              <div class="slider-row"><span>Energy</span><span class="val" id="energy-val">0.7</span></div>
+              <input type="range" id="energy" min="0" max="1" step="0.01" value="0.7" />
+            </label>
+            <label class="field">
+              <div class="slider-row"><span>Tempo (BPM)</span><span class="val" id="bpm-val">120</span></div>
+              <input type="range" id="bpm" min="70" max="170" step="1" value="120" />
+            </label>
+            <button class="btn primary" id="generate" type="button" style="width: 100%">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 3l14 9-14 9z"/></svg>
+              Generate motion
+            </button>
+          </div>
+
+          <div>
+            <div class="stage-wrap">
+              <div class="stage">
+                <span class="badge"><span class="dot" id="live-dot"></span> <span id="stage-state">MotionDNA preview</span></span>
+                <canvas id="stage-canvas"></canvas>
+              </div>
+              <div class="stage-bar">
+                <div class="chips" id="interpreted">
+                  <span class="chip">Style <b id="c-style">pop</b></span>
+                  <span class="chip">Energy <b id="c-energy">0.70</b></span>
+                  <span class="chip">BPM <b id="c-bpm">120</b></span>
+                  <span class="chip">Mood <b id="c-mood">confident</b></span>
+                </div>
+                <div class="controls">
+                  <button class="btn sm" id="playpause" type="button">Pause</button>
+                </div>
+              </div>
+            </div>
+            <p class="note">
+              This is a real-time motion preview synthesized in the browser from
+              your prompt. Full video rendering with the trained MotionDNA model
+              is part of the closed beta —
+              <a href="index.html#beta">join the waitlist</a>.
+            </p>
+          </div>
+        </section>
+
+        <!-- Loading state -->
+        <section id="loading" class="gate hidden">
+          <div class="lock" aria-hidden="true">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.2-8.6"/></svg>
+          </div>
+          <h2>Loading…</h2>
+          <p>Preparing the MotionDNA playground.</p>
+        </section>
+      </main>
+
+      <footer>
+        <div class="wrap">© <span id="year"></span> Boostify · MotionDNA private playground</div>
+      </footer>
+    </div>
+
+    <script>
+      /* =========================================================
+         CLERK CONFIG
+         Paste your Clerk Publishable Key below (pk_test_... or
+         pk_live_...). It is SAFE to expose in client code.
+         Find it in: Clerk Dashboard → API Keys, or run `clerk auth login`.
+         While left as the placeholder, the page runs in PREVIEW mode
+         (auth disabled) so you can still try the playground.
+         ========================================================= */
+      window.CLERK_PUBLISHABLE_KEY = "pk_test_REPLACE_WITH_YOUR_CLERK_PUBLISHABLE_KEY";
+
+      document.getElementById("year").textContent = new Date().getFullYear();
+
+      var els = {
+        authOut: document.getElementById("auth-out"),
+        authIn: document.getElementById("auth-in"),
+        authPreview: document.getElementById("auth-preview"),
+        greet: document.getElementById("greet"),
+        userButton: document.getElementById("user-button"),
+        banner: document.getElementById("config-banner"),
+        gate: document.getElementById("gate"),
+        studio: document.getElementById("studio"),
+        loading: document.getElementById("loading"),
+      };
+
+      function show(el) { el && el.classList.remove("hidden"); }
+      function hide(el) { el && el.classList.add("hidden"); }
+
+      /* ---------- UI states ---------- */
+      function showSignedOut() {
+        hide(els.loading); hide(els.studio); hide(els.authIn); hide(els.authPreview);
+        show(els.gate); show(els.authOut);
+      }
+      function showSignedIn(user) {
+        hide(els.loading); hide(els.gate); hide(els.authOut); hide(els.authPreview);
+        show(els.studio); show(els.authIn);
+        var name = (user && (user.firstName || user.username)) || "";
+        els.greet.innerHTML = name ? ("Hi, <b>" + name + "</b>") : "";
+        startStudio();
+      }
+      function showPreview() {
+        hide(els.loading); hide(els.gate); hide(els.authOut); hide(els.authIn);
+        show(els.banner); show(els.studio); show(els.authPreview);
+        startStudio();
+      }
+
+      /* ---------- Clerk bootstrap ---------- */
+      var PLACEHOLDER = "pk_test_REPLACE_WITH_YOUR_CLERK_PUBLISHABLE_KEY";
+      var pk = window.CLERK_PUBLISHABLE_KEY;
+
+      function frontendApiFromKey(key) {
+        try {
+          var b64 = key.replace(/^pk_(test|live)_/, "");
+          return atob(b64).replace(/\$+$/, "");
+        } catch (e) { return null; }
+      }
+
+      var clerk = null;
+      var userBtnMounted = false;
+
+      function refreshAuth() {
+        if (!clerk) return;
+        if (clerk.user) {
+          showSignedIn(clerk.user);
+          if (!userBtnMounted) {
+            try { clerk.mountUserButton(els.userButton, { afterSignOutUrl: location.href }); userBtnMounted = true; }
+            catch (e) {}
+          }
+        } else {
+          showSignedOut();
+          if (userBtnMounted) { try { clerk.unmountUserButton(els.userButton); } catch (e) {} userBtnMounted = false; }
+        }
+      }
+
+      function wireAuthButtons() {
+        function si() { clerk && clerk.openSignIn(); }
+        function su() { clerk && clerk.openSignUp(); }
+        ["btn-signin", "gate-signin"].forEach(function (id) {
+          var b = document.getElementById(id); if (b) b.addEventListener("click", si);
+        });
+        ["btn-signup", "gate-signup"].forEach(function (id) {
+          var b = document.getElementById(id); if (b) b.addEventListener("click", su);
+        });
+      }
+
+      function bootClerk() {
+        show(els.loading);
+        var host = frontendApiFromKey(pk);
+        if (!host) { showPreview(); return; }
+        var s = document.createElement("script");
+        s.async = true;
+        s.crossOrigin = "anonymous";
+        s.src = "https://" + host + "/npm/@clerk/clerk-js@5/dist/clerk.browser.js";
+        s.onerror = function () { showPreview(); };
+        s.onload = function () {
+          try {
+            var Ctor = window.Clerk;
+            clerk = new Ctor(pk);
+            clerk.load({ appearance: { variables: { colorPrimary: "#ff6a2b", colorBackground: "#121519", colorText: "#e7ecf2" } } })
+              .then(function () {
+                wireAuthButtons();
+                refreshAuth();
+                clerk.addListener(function () { refreshAuth(); });
+              })
+              .catch(function () { showPreview(); });
+          } catch (e) { showPreview(); }
+        };
+        document.head.appendChild(s);
+      }
+
+      if (!pk || pk === PLACEHOLDER || !/^pk_(test|live)_/.test(pk)) {
+        showPreview();
+      } else {
+        bootClerk();
+      }
+
+      /* =========================================================
+         MOTION PLAYGROUND — real-time browser motion synthesis.
+         A parametric mocap dancer driven by the prompt parameters.
+         Ready to be replaced by a call to the real inference API.
+         ========================================================= */
+      var studioStarted = false;
+      function startStudio() {
+        if (studioStarted) return;
+        studioStarted = true;
+
+        var canvas = document.getElementById("stage-canvas");
+        var ctx = canvas.getContext("2d");
+        var promptEl = document.getElementById("prompt");
+        var styleEl = document.getElementById("style");
+        var energyEl = document.getElementById("energy");
+        var bpmEl = document.getElementById("bpm");
+        var energyVal = document.getElementById("energy-val");
+        var bpmVal = document.getElementById("bpm-val");
+        var genBtn = document.getElementById("generate");
+        var playBtn = document.getElementById("playpause");
+        var stateEl = document.getElementById("stage-state");
+
+        var state = { energy: 0.7, bpm: 120, seed: 1, playing: true, style: "pop", t0: performance.now() };
+
+        function hashStr(str) {
+          var h = 2166136261;
+          for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+          return (h >>> 0);
+        }
+
+        var MOODS = {
+          pop: "confident", afrobeats: "joyful", hiphop: "swagger",
+          rnb: "smooth", rock: "raw", electronic: "hypnotic", ballad: "emotive"
+        };
+
+        function fit() {
+          var dpr = Math.min(window.devicePixelRatio || 1, 2);
+          var r = canvas.getBoundingClientRect();
+          canvas.width = Math.max(2, Math.round(r.width * dpr));
+          canvas.height = Math.max(2, Math.round(r.height * dpr));
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          return { w: r.width, h: r.height };
+        }
+
+        function rng(seed) {
+          var s = seed >>> 0;
+          return function () { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+        }
+
+        function joint(bx, by, ang, len) {
+          return { x: bx + Math.cos(ang) * len, y: by + Math.sin(ang) * len };
+        }
+
+        function bone(a, b, w, col) {
+          ctx.lineWidth = w; ctx.strokeStyle = col; ctx.lineCap = "round";
+          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        }
+        function pt(p, r, col) {
+          ctx.fillStyle = col; ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+        }
+
+        function draw(now) {
+          var dims = fit();
+          var W = dims.w, H = dims.h;
+          ctx.clearRect(0, 0, W, H);
+
+          var beats = state.playing ? ((now - state.t0) / 1000) * (state.bpm / 60) : state.frozen || 0;
+          if (state.playing) state.frozen = beats;
+          var phase = beats * Math.PI * 2;
+          var e = state.energy;
+          var off = (state.seed % 1000) / 1000 * Math.PI * 2;
+
+          var scale = Math.min(W, H) / 380;
+          var cx = W / 2;
+          var groundY = H * 0.86;
+
+          // floor reflection line
+          var grad = ctx.createLinearGradient(0, groundY - 4, 0, groundY + 4);
+          grad.addColorStop(0, "rgba(255,106,43,0.0)");
+          grad.addColorStop(0.5, "rgba(255,106,43,0.35)");
+          grad.addColorStop(1, "rgba(255,106,43,0.0)");
+          ctx.fillStyle = grad;
+          ctx.fillRect(cx - 150 * scale, groundY - 2, 300 * scale, 4);
+
+          var bob = Math.sin(phase) * 7 * e * scale;
+          var sway = Math.sin(phase * 0.5 + off) * 16 * e * scale;
+          var px = cx + sway;
+          var py = groundY - 178 * scale + bob; // pelvis
+
+          var L = scale;
+          var pelvis = { x: px, y: py };
+          var chest = { x: px + Math.sin(phase * 0.5 + off) * 5 * e * L, y: py - 56 * L };
+          var neck = { x: chest.x, y: chest.y - 26 * L };
+          var head = { x: neck.x + Math.sin(phase + off) * 3 * e * L, y: neck.y - 20 * L };
+          var shoulderL = { x: chest.x - 24 * L, y: chest.y + 2 * L };
+          var shoulderR = { x: chest.x + 24 * L, y: chest.y + 2 * L };
+          var hipL = { x: pelvis.x - 15 * L, y: pelvis.y };
+          var hipR = { x: pelvis.x + 15 * L, y: pelvis.y };
+
+          // arms (mirror phases for a dancing feel)
+          var aSwing = (0.5 + 1.1 * e);
+          var upL = Math.PI / 2 + 0.45 + Math.sin(phase + off) * aSwing;
+          var upR = Math.PI / 2 - 0.45 + Math.sin(phase + Math.PI + off) * aSwing;
+          var elbowL = joint(shoulderL.x, shoulderL.y, upL, 32 * L);
+          var elbowR = joint(shoulderR.x, shoulderR.y, upR, 32 * L);
+          var foL = upL + 0.3 + Math.sin(phase * 1.3 + 1 + off) * 0.7 * e;
+          var foR = upR - 0.3 + Math.sin(phase * 1.3 + 1 + Math.PI + off) * 0.7 * e;
+          var handL = joint(elbowL.x, elbowL.y, foL, 30 * L);
+          var handR = joint(elbowR.x, elbowR.y, foR, 30 * L);
+
+          // legs
+          var lSwing = 0.32 * e;
+          var thL = Math.PI / 2 - 0.16 + Math.sin(phase + Math.PI) * lSwing;
+          var thR = Math.PI / 2 + 0.16 + Math.sin(phase) * lSwing;
+          var kneeL = joint(hipL.x, hipL.y, thL, 44 * L);
+          var kneeR = joint(hipR.x, hipR.y, thR, 44 * L);
+          var shL = thL + 0.18 + Math.abs(Math.sin(phase)) * 0.5 * e;
+          var shR = thR + 0.18 + Math.abs(Math.sin(phase + Math.PI)) * 0.5 * e;
+          var footL = joint(kneeL.x, kneeL.y, shL, 44 * L);
+          var footR = joint(kneeR.x, kneeR.y, shR, 44 * L);
+
+          // glow
+          ctx.shadowColor = "rgba(255,106,43,0.55)";
+          ctx.shadowBlur = 16;
+
+          var bw = 5.2 * L;
+          var col1 = "#ff7a3c", col2 = "#ffb02e";
+          // torso + limbs
+          bone(pelvis, chest, bw, col1);
+          bone(chest, neck, bw, col1);
+          bone(shoulderL, shoulderR, bw * 0.8, col1);
+          bone(shoulderL, elbowL, bw, col2); bone(elbowL, handL, bw, col2);
+          bone(shoulderR, elbowR, bw, col2); bone(elbowR, handR, bw, col2);
+          bone(hipL, hipR, bw * 0.8, col1);
+          bone(hipL, kneeL, bw, col2); bone(kneeL, footL, bw, col2);
+          bone(hipR, kneeR, bw, col2); bone(kneeR, footR, bw, col2);
+
+          // head
+          ctx.fillStyle = "#0a0c0f"; ctx.strokeStyle = col1; ctx.lineWidth = bw;
+          ctx.beginPath(); ctx.arc(head.x, head.y, 13 * L, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+
+          ctx.shadowBlur = 0;
+          // joints
+          var jc = "#ffe3c2";
+          [pelvis, chest, neck, shoulderL, shoulderR, elbowL, elbowR, handL, handR, hipL, hipR, kneeL, kneeR, footL, footR]
+            .forEach(function (p) { pt(p, 3 * L, jc); });
+
+          if (state.playing) raf = requestAnimationFrame(draw);
+        }
+
+        var raf = null;
+        function loop() { if (raf) cancelAnimationFrame(raf); state.t0 = performance.now() - (state.frozen || 0) / (state.bpm / 60) * 1000; raf = requestAnimationFrame(draw); }
+
+        function applyParams() {
+          state.energy = parseFloat(energyEl.value);
+          state.bpm = parseInt(bpmEl.value, 10);
+          state.style = styleEl.value;
+          energyVal.textContent = state.energy.toFixed(2);
+          bpmVal.textContent = state.bpm;
+          document.getElementById("c-style").textContent = state.style;
+          document.getElementById("c-energy").textContent = state.energy.toFixed(2);
+          document.getElementById("c-bpm").textContent = state.bpm;
+          document.getElementById("c-mood").textContent = MOODS[state.style] || "expressive";
+        }
+
+        function interpretPrompt() {
+          // "Model interpretation": derive params from the prompt text.
+          var txt = (promptEl.value || "").toLowerCase();
+          var h = hashStr(txt + styleEl.value);
+          state.seed = h;
+          var energetic = /(energetic|fast|hype|jump|explosive|wild|intense)/.test(txt);
+          var calm = /(slow|smooth|calm|gentle|ballad|soft|emotional)/.test(txt);
+          var baseE = 0.6 + ((h % 100) / 100) * 0.3;
+          if (energetic) baseE = Math.min(1, baseE + 0.25);
+          if (calm) baseE = Math.max(0.2, baseE - 0.3);
+          var baseBpm = 95 + (h % 70);
+          if (energetic) baseBpm = Math.min(170, baseBpm + 25);
+          if (calm) baseBpm = Math.max(70, baseBpm - 25);
+          energyEl.value = baseE.toFixed(2);
+          bpmEl.value = Math.round(baseBpm);
+          applyParams();
+        }
+
+        function generate() {
+          genBtn.disabled = true;
+          stateEl.textContent = "Synthesizing…";
+          document.getElementById("live-dot").style.background = "var(--accent2)";
+          document.getElementById("live-dot").style.boxShadow = "0 0 10px var(--accent2)";
+          setTimeout(function () {
+            interpretPrompt();
+            state.frozen = 0;
+            state.playing = true;
+            playBtn.textContent = "Pause";
+            loop();
+            stateEl.textContent = "MotionDNA preview";
+            document.getElementById("live-dot").style.background = "var(--good)";
+            document.getElementById("live-dot").style.boxShadow = "0 0 10px var(--good)";
+            genBtn.disabled = false;
+          }, 520);
+        }
+
+        energyEl.addEventListener("input", function () { applyParams(); });
+        bpmEl.addEventListener("input", function () { applyParams(); if (state.playing) loop(); });
+        styleEl.addEventListener("change", function () { applyParams(); });
+        genBtn.addEventListener("click", generate);
+        playBtn.addEventListener("click", function () {
+          state.playing = !state.playing;
+          playBtn.textContent = state.playing ? "Pause" : "Play";
+          if (state.playing) loop(); else if (raf) cancelAnimationFrame(raf);
+        });
+        window.addEventListener("resize", function () { if (!state.playing) requestAnimationFrame(draw); });
+
+        applyParams();
+        interpretPrompt();
+        loop();
+      }
+    </script>
+  </body>
+</html>
