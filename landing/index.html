@@ -1,0 +1,1016 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Boostify MotionDNA — The Motion Model Trained on 700+ Real Music Videos</title>
+    <meta
+      name="description"
+      content="Boostify MotionDNA turns any song into a music video with real artist movements, natural choreography and stage energy — trained on 700+ real music videos. Join the closed beta, launching Q2 2026."
+    />
+    <meta property="og:title" content="Boostify MotionDNA" />
+    <meta
+      property="og:description"
+      content="Transform any song into a video with real artist movements, natural choreography and stage energy — without filming a single take. Trained on 700+ real music videos."
+    />
+    <meta property="og:type" content="website" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ff6a2b'/%3E%3Cstop offset='1' stop-color='%23ffb02e'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Cpath d='M8 20c2-8 4-8 6 0s4 8 6 0' fill='none' stroke='%230b0d10' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+    />
+    <style>
+      :root {
+        --bg: #0b0d10;
+        --surface: #121519;
+        --surface2: #171b21;
+        --border: #232932;
+        --fg: #e7ecf2;
+        --muted: #8b97a6;
+        --accent: #ff6a2b;
+        --accent2: #ffb02e;
+        --good: #39d98a;
+        --info: #4ea8ff;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          system-ui, sans-serif;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+      }
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+      .wrap {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 0 24px;
+      }
+      .glow {
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        background:
+          radial-gradient(
+            700px 460px at 72% -10%,
+            rgba(255, 106, 43, 0.2),
+            transparent 60%
+          ),
+          radial-gradient(
+            560px 380px at 8% 6%,
+            rgba(255, 176, 46, 0.1),
+            transparent 60%
+          );
+      }
+      .content {
+        position: relative;
+        z-index: 1;
+      }
+      /* ---- Header ---- */
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 20px 0;
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        background: rgba(11, 13, 16, 0.72);
+        backdrop-filter: blur(12px);
+        border-bottom: 1px solid transparent;
+      }
+      header.scrolled {
+        border-bottom-color: var(--border);
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        font-size: 17px;
+      }
+      .logo {
+        width: 38px;
+        height: 38px;
+        border-radius: 10px;
+        background: linear-gradient(135deg, var(--accent), var(--accent2));
+        display: grid;
+        place-items: center;
+        box-shadow: 0 8px 24px rgba(255, 106, 43, 0.35);
+        flex: none;
+      }
+      .brand small {
+        display: block;
+        font-weight: 500;
+        font-size: 11px;
+        color: var(--muted);
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .nav-links {
+        display: flex;
+        align-items: center;
+        gap: 26px;
+        font-size: 14px;
+        color: var(--muted);
+      }
+      .nav-links a:hover {
+        color: var(--fg);
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        padding: 13px 22px;
+        border-radius: 11px;
+        font-size: 15px;
+        font-weight: 600;
+        border: 1px solid var(--border);
+        background: var(--surface2);
+        color: var(--fg);
+        transition: transform 0.15s ease, border-color 0.15s ease,
+          box-shadow 0.2s ease, opacity 0.15s ease;
+        cursor: pointer;
+        font-family: inherit;
+      }
+      .btn svg {
+        width: 18px;
+        height: 18px;
+      }
+      .btn:hover {
+        transform: translateY(-2px);
+        border-color: #3a424e;
+      }
+      .btn.primary {
+        background: linear-gradient(135deg, var(--accent), var(--accent2));
+        border-color: transparent;
+        color: #160a02;
+        box-shadow: 0 12px 30px rgba(255, 106, 43, 0.3);
+      }
+      .btn.sm {
+        padding: 9px 16px;
+        font-size: 14px;
+      }
+      /* ---- Hero ---- */
+      .hero {
+        text-align: center;
+        padding: 84px 0 40px;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 15px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        border-radius: 999px;
+        font-size: 13px;
+        color: var(--muted);
+        margin-bottom: 28px;
+      }
+      .pill .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--good);
+        box-shadow: 0 0 0 3px rgba(57, 217, 138, 0.18);
+      }
+      h1 {
+        font-size: clamp(36px, 6.4vw, 66px);
+        line-height: 1.04;
+        letter-spacing: -0.035em;
+        margin: 0 0 22px;
+        font-weight: 800;
+      }
+      .grad {
+        background: linear-gradient(120deg, var(--accent), var(--accent2));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      .sub {
+        max-width: 720px;
+        margin: 0 auto 38px;
+        font-size: clamp(16px, 2.4vw, 20px);
+        color: var(--muted);
+      }
+      .hero-cta {
+        display: flex;
+        gap: 14px;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+      /* ---- Stat strip ---- */
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+        max-width: 760px;
+        margin: 56px auto 0;
+      }
+      .stat {
+        border: 1px solid var(--border);
+        background: var(--surface);
+        border-radius: 14px;
+        padding: 22px 14px;
+      }
+      .stat .v {
+        font-size: clamp(22px, 3vw, 30px);
+        font-weight: 800;
+        letter-spacing: -0.02em;
+      }
+      .stat .v.grad {
+        background: linear-gradient(120deg, var(--accent), var(--accent2));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      .stat .k {
+        font-size: 12.5px;
+        color: var(--muted);
+        margin-top: 4px;
+      }
+      /* ---- Sections ---- */
+      section.block {
+        padding: 84px 0;
+      }
+      .eyebrow {
+        color: var(--accent2);
+        font-weight: 600;
+        font-size: 13px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        text-align: center;
+      }
+      h2 {
+        text-align: center;
+        font-size: clamp(27px, 4.2vw, 40px);
+        letter-spacing: -0.025em;
+        margin: 12px auto 18px;
+        max-width: 760px;
+      }
+      .lead {
+        text-align: center;
+        color: var(--muted);
+        max-width: 720px;
+        margin: 0 auto 50px;
+        font-size: 17px;
+      }
+      .grid-3 {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 18px;
+      }
+      .grid-2 {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 18px;
+      }
+      .card {
+        border: 1px solid var(--border);
+        background: var(--surface);
+        border-radius: 16px;
+        padding: 26px;
+        transition: border-color 0.2s ease, transform 0.2s ease;
+      }
+      .card:hover {
+        border-color: #3a424e;
+        transform: translateY(-3px);
+      }
+      .card .ic {
+        width: 46px;
+        height: 46px;
+        border-radius: 12px;
+        display: grid;
+        place-items: center;
+        background: rgba(255, 106, 43, 0.12);
+        color: var(--accent2);
+        margin-bottom: 18px;
+      }
+      .card h3 {
+        margin: 0 0 9px;
+        font-size: 18px;
+        letter-spacing: -0.01em;
+      }
+      .card p {
+        margin: 0;
+        font-size: 14.5px;
+        color: var(--muted);
+      }
+      /* ---- What is + bullet list ---- */
+      .split {
+        display: grid;
+        grid-template-columns: 1.05fr 0.95fr;
+        gap: 48px;
+        align-items: center;
+      }
+      .split h2,
+      .split .eyebrow {
+        text-align: left;
+      }
+      .split h2 {
+        margin-left: 0;
+      }
+      .split p.body {
+        color: var(--muted);
+        font-size: 16.5px;
+        margin: 0 0 26px;
+      }
+      .check {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: grid;
+        gap: 14px;
+      }
+      .check li {
+        display: flex;
+        gap: 13px;
+        align-items: flex-start;
+        font-size: 15.5px;
+      }
+      .check li .tick {
+        flex: none;
+        width: 24px;
+        height: 24px;
+        border-radius: 7px;
+        background: rgba(57, 217, 138, 0.14);
+        color: var(--good);
+        display: grid;
+        place-items: center;
+        margin-top: 2px;
+      }
+      .panel {
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        background: radial-gradient(
+            400px 240px at 80% 0%,
+            rgba(255, 106, 43, 0.12),
+            transparent 70%
+          ),
+          var(--surface);
+        padding: 32px;
+      }
+      .panel .row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 14px 0;
+        border-bottom: 1px solid var(--border);
+      }
+      .panel .row:last-child {
+        border-bottom: none;
+      }
+      .panel .row .n {
+        flex: none;
+        width: 34px;
+        height: 34px;
+        border-radius: 9px;
+        background: linear-gradient(135deg, var(--accent), var(--accent2));
+        color: #160a02;
+        font-weight: 800;
+        display: grid;
+        place-items: center;
+        font-size: 14px;
+      }
+      .panel .row b {
+        font-size: 15px;
+      }
+      .panel .row span {
+        display: block;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      /* ---- Steps ---- */
+      .steps {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 14px;
+        counter-reset: step;
+      }
+      .step {
+        border: 1px solid var(--border);
+        background: var(--surface);
+        border-radius: 14px;
+        padding: 22px 18px;
+        position: relative;
+      }
+      .step .num {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        background: linear-gradient(135deg, var(--accent), var(--accent2));
+        color: #160a02;
+        font-weight: 800;
+        display: grid;
+        place-items: center;
+        margin-bottom: 14px;
+      }
+      .step h4 {
+        margin: 0 0 6px;
+        font-size: 15px;
+      }
+      .step p {
+        margin: 0;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      /* ---- Unique / Create lists ---- */
+      .feat {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+      .feat .item {
+        display: flex;
+        gap: 14px;
+        align-items: flex-start;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        border-radius: 13px;
+        padding: 18px 20px;
+      }
+      .feat .item .tick {
+        flex: none;
+        width: 26px;
+        height: 26px;
+        border-radius: 8px;
+        background: rgba(255, 106, 43, 0.14);
+        color: var(--accent2);
+        display: grid;
+        place-items: center;
+        margin-top: 1px;
+      }
+      .feat .item b {
+        font-size: 15px;
+      }
+      .feat .item span {
+        color: var(--muted);
+        font-size: 14px;
+      }
+      /* ---- Beta form ---- */
+      .beta {
+        border: 1px solid var(--border);
+        border-radius: 22px;
+        background: radial-gradient(
+            560px 320px at 50% 0%,
+            rgba(255, 106, 43, 0.14),
+            transparent 70%
+          ),
+          var(--surface);
+        padding: 56px 40px;
+      }
+      .beta .head {
+        text-align: center;
+        margin-bottom: 40px;
+      }
+      .form {
+        max-width: 640px;
+        margin: 0 auto;
+        display: grid;
+        gap: 16px;
+      }
+      .field {
+        display: grid;
+        gap: 7px;
+      }
+      .field.two {
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        display: grid;
+      }
+      label {
+        font-size: 13px;
+        color: var(--muted);
+        font-weight: 500;
+      }
+      input,
+      select,
+      textarea {
+        width: 100%;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        color: var(--fg);
+        border-radius: 11px;
+        padding: 13px 15px;
+        font-size: 15px;
+        font-family: inherit;
+        transition: border-color 0.15s ease, box-shadow 0.15s ease;
+      }
+      input:focus,
+      select:focus,
+      textarea:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(255, 106, 43, 0.18);
+      }
+      textarea {
+        resize: vertical;
+        min-height: 96px;
+      }
+      .form .btn.primary {
+        padding: 15px;
+        font-size: 16px;
+        margin-top: 6px;
+      }
+      .form-note {
+        text-align: center;
+        font-size: 12.5px;
+        color: var(--muted);
+        margin-top: 2px;
+      }
+      .success {
+        display: none;
+        text-align: center;
+        border: 1px solid rgba(57, 217, 138, 0.4);
+        background: rgba(57, 217, 138, 0.08);
+        border-radius: 14px;
+        padding: 30px;
+        max-width: 640px;
+        margin: 0 auto;
+      }
+      .success .ico {
+        width: 54px;
+        height: 54px;
+        border-radius: 50%;
+        background: rgba(57, 217, 138, 0.16);
+        color: var(--good);
+        display: grid;
+        place-items: center;
+        margin: 0 auto 16px;
+      }
+      .success h3 {
+        margin: 0 0 8px;
+        font-size: 20px;
+      }
+      .success p {
+        margin: 0;
+        color: var(--muted);
+      }
+      /* ---- Footer ---- */
+      footer {
+        border-top: 1px solid var(--border);
+        padding: 34px 0;
+        margin-top: 30px;
+        color: var(--muted);
+        font-size: 13px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 14px;
+      }
+      footer a:hover {
+        color: var(--fg);
+      }
+      @media (max-width: 900px) {
+        .steps {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .split {
+          grid-template-columns: 1fr;
+          gap: 32px;
+        }
+      }
+      @media (max-width: 760px) {
+        .nav-links a:not(.btn) {
+          display: none;
+        }
+        .grid-3,
+        .grid-2,
+        .feat {
+          grid-template-columns: 1fr;
+        }
+        .stats {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .field.two {
+          grid-template-columns: 1fr;
+        }
+        .beta {
+          padding: 40px 22px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="glow"></div>
+    <div class="content">
+      <header id="hdr">
+        <div class="wrap" style="display: flex; align-items: center; justify-content: space-between; padding: 0">
+          <div class="brand">
+            <span class="logo" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 32 32" fill="none">
+                <path
+                  d="M8 20c2-8 4-8 6 0s4 8 6 0"
+                  stroke="#0b0d10"
+                  stroke-width="2.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </span>
+            <span>Boostify <small>MotionDNA</small></span>
+          </div>
+          <nav class="nav-links">
+            <a href="#what">What is it</a>
+            <a href="#how">How it works</a>
+            <a href="#unique">Why MotionDNA</a>
+            <a href="#beta" class="btn primary sm">Join Early Access</a>
+          </nav>
+        </div>
+      </header>
+
+      <div class="wrap">
+        <!-- HERO -->
+        <section class="hero">
+          <span class="pill"><span class="dot"></span> Closed beta · Launching Q2 2026</span>
+          <h1>
+            The Motion Model Trained on<br />
+            <span class="grad">700+ Real Music Videos</span>
+          </h1>
+          <p class="sub">
+            Transform any song into a video with real artist movements, natural
+            choreography and stage energy — without filming a single take.
+          </p>
+          <div class="hero-cta">
+            <a href="#beta" class="btn primary">Join Early Access</a>
+            <a href="#how" class="btn">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+              Watch Demo
+            </a>
+          </div>
+
+          <div class="stats">
+            <div class="stat">
+              <div class="v grad">700+</div>
+              <div class="k">Music Videos</div>
+            </div>
+            <div class="stat">
+              <div class="v">AI</div>
+              <div class="k">Powered</div>
+            </div>
+            <div class="stat">
+              <div class="v">Real</div>
+              <div class="k">Movements</div>
+            </div>
+            <div class="stat">
+              <div class="v">Q2 2026</div>
+              <div class="k">Launch</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- PILLARS -->
+        <section class="block" style="padding-top: 30px">
+          <div class="grid-3">
+            <div class="card">
+              <div class="ic">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="2.5"/><path d="M12 7.5V13M12 13l-4 5M12 13l4 5M6 10l6 1 6-1"/></svg>
+              </div>
+              <h3>Motion Capture AI</h3>
+              <p>Advanced neural networks analyze real artist performances frame by frame.</p>
+            </div>
+            <div class="card">
+              <div class="ic">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h10"/><circle cx="19" cy="17" r="2"/></svg>
+              </div>
+              <h3>Training Pipeline</h3>
+              <p>700+ music videos transformed into reusable movement patterns.</p>
+            </div>
+            <div class="card">
+              <div class="ic">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h3l2 6 4-14 2 8h7"/></svg>
+              </div>
+              <h3>Real-Time Analysis</h3>
+              <p>Instant motion generation synced to the tempo and energy of your music.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- WHAT IS IT -->
+        <section class="block" id="what">
+          <div class="split">
+            <div>
+              <p class="eyebrow">What is Boostify MotionDNA?</p>
+              <h2>A proprietary motion model, not another image generator</h2>
+              <p class="body">
+                Boostify MotionDNA is the official motion-capture model of
+                Boostify, trained on over 700 music videos filmed in real
+                productions. Instead of generating static images, it focuses on
+                something far more valuable: movement.
+              </p>
+              <ul class="check">
+                <li>
+                  <span class="tick">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg>
+                  </span>
+                  <div>How an artist moves on stage</div>
+                </li>
+                <li>
+                  <span class="tick">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg>
+                  </span>
+                  <div>How choreography breathes</div>
+                </li>
+                <li>
+                  <span class="tick">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg>
+                  </span>
+                  <div>How a camera follows the performance</div>
+                </li>
+              </ul>
+            </div>
+            <div class="panel">
+              <p style="margin: 0 0 18px; font-size: 14px; color: var(--muted)">
+                That knowledge becomes a model Boostify applies to your
+                AI-generated videos — making them look like music videos
+                directed by real professionals, not generic algorithms.
+              </p>
+              <div class="row">
+                <span class="n">01</span>
+                <div><b>Real productions</b><span>700+ professional shoots</span></div>
+              </div>
+              <div class="row">
+                <span class="n">02</span>
+                <div><b>Movement patterns</b><span>Poses, intensity, camera paths</span></div>
+              </div>
+              <div class="row">
+                <span class="n">03</span>
+                <div><b>Applied to your clips</b><span>Directed, professional feel</span></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- AUDIENCE -->
+        <section class="block">
+          <p class="eyebrow">Who it's for</p>
+          <h2>Built for artists, directors & labels who want more than templates</h2>
+          <div class="grid-2">
+            <div class="card">
+              <div class="ic">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M5 21v-1a7 7 0 0 1 14 0v1"/></svg>
+              </div>
+              <h3>Independent Artists</h3>
+              <p>Get music videos with real stage presence — no crew, no studio.</p>
+            </div>
+            <div class="card">
+              <div class="ic">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 0 1 18 0"/><circle cx="12" cy="14" r="3"/></svg>
+              </div>
+              <h3>Music Producers</h3>
+              <p>Constant visual content without 20 shoots per month.</p>
+            </div>
+            <div class="card">
+              <div class="ic">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="14" height="12" rx="2"/><path d="M17 10l4-2v8l-4-2"/></svg>
+              </div>
+              <h3>Directors & Creatives</h3>
+              <p>Use AI without losing professional video language.</p>
+            </div>
+            <div class="card">
+              <div class="ic">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-6h6v6"/></svg>
+              </div>
+              <h3>Labels & Managers</h3>
+              <p>Standardize visual quality with automated workflows.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- HOW IT WORKS -->
+        <section class="block" id="how">
+          <p class="eyebrow">The workflow</p>
+          <h2>How Boostify MotionDNA works</h2>
+          <p class="lead">
+            We handle the technical complexity. You focus on the music and the
+            creativity.
+          </p>
+          <div class="steps">
+            <div class="step">
+              <div class="num">1</div>
+              <h4>Analyze Music</h4>
+              <p>Upload your song. The system reads tempo, energy and structure.</p>
+            </div>
+            <div class="step">
+              <div class="num">2</div>
+              <h4>Select MotionDNA</h4>
+              <p>Boostify chooses a movement profile based on your style.</p>
+            </div>
+            <div class="step">
+              <div class="num">3</div>
+              <h4>Generate Movements</h4>
+              <p>AI builds a timeline of poses, intensities and camera angles.</p>
+            </div>
+            <div class="step">
+              <div class="num">4</div>
+              <h4>Apply to Video</h4>
+              <p>The motion skeleton is applied to your AI-generated clips.</p>
+            </div>
+            <div class="step">
+              <div class="num">5</div>
+              <h4>Fine-tune & Export</h4>
+              <p>Adjust intensity, speed and camera. Export ready to publish.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- UNIQUE -->
+        <section class="block" id="unique">
+          <p class="eyebrow">The difference</p>
+          <h2>What makes Boostify MotionDNA unique</h2>
+          <div class="feat">
+            <div class="item">
+              <span class="tick"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg></span>
+              <div><b>Trained on real productions</b><br /><span>700+ professional music videos as its foundation.</span></div>
+            </div>
+            <div class="item">
+              <span class="tick"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg></span>
+              <div><b>Music-video language</b><br /><span>Patterns learned from real artists on stage, not templates.</span></div>
+            </div>
+            <div class="item">
+              <span class="tick"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg></span>
+              <div><b>Genre adaptive</b><br /><span>Rock, urban, pop, bachata, salsa, electronic & more.</span></div>
+            </div>
+            <div class="item">
+              <span class="tick"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg></span>
+              <div><b>Modern-AI ready</b><br /><span>Integrates with text-to-video, image-to-video & avatars.</span></div>
+            </div>
+            <div class="item">
+              <span class="tick"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg></span>
+              <div><b>Brand consistency</b><br /><span>Define movement lines to keep personality across videos.</span></div>
+            </div>
+            <div class="item">
+              <span class="tick"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg></span>
+              <div><b>Proprietary dataset</b><br /><span>Impossible to replicate with generic datasets.</span></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- CREATE -->
+        <section class="block">
+          <p class="eyebrow">Use cases</p>
+          <h2>What you can create with MotionDNA</h2>
+          <div class="feat">
+            <div class="item">
+              <span class="tick"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 5v14l11-7z"/></svg></span>
+              <div><span style="color: var(--fg)">Complete AI-generated music videos with real artist movements.</span></div>
+            </div>
+            <div class="item">
+              <span class="tick"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 5v14l11-7z"/></svg></span>
+              <div><span style="color: var(--fg)">Visualizers and loops with expressive motion for Spotify, YouTube, TikTok.</span></div>
+            </div>
+            <div class="item">
+              <span class="tick"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 5v14l11-7z"/></svg></span>
+              <div><span style="color: var(--fg)">Lyric videos with live camera and dynamic scenes.</span></div>
+            </div>
+            <div class="item">
+              <span class="tick"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 5v14l11-7z"/></svg></span>
+              <div><span style="color: var(--fg)">Social content (shorts, reels, stories) with choreography hooks.</span></div>
+            </div>
+            <div class="item">
+              <span class="tick"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 5v14l11-7z"/></svg></span>
+              <div><span style="color: var(--fg)">Creative experiments combining different movement styles.</span></div>
+            </div>
+            <div class="item">
+              <span class="tick"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 5v14l11-7z"/></svg></span>
+              <div><span style="color: var(--fg)">Performance videos without expensive production costs.</span></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- BETA FORM -->
+        <section class="block" id="beta">
+          <div class="beta">
+            <div class="head">
+              <p class="eyebrow">Launching Q2 2026</p>
+              <h2>Join the first generation of artists with MotionDNA</h2>
+              <p class="lead" style="margin-bottom: 0">
+                We're opening a closed beta for a limited group of artists,
+                producers, directors, managers and labels who want to use this
+                model before anyone else — and help us refine the system.
+              </p>
+            </div>
+
+            <form class="form" id="beta-form" novalidate>
+              <div class="field">
+                <label for="name">Name / Artist Name</label>
+                <input id="name" name="name" type="text" required placeholder="Your name or stage name" />
+              </div>
+              <div class="field two">
+                <div class="field">
+                  <label for="email">Email</label>
+                  <input id="email" name="email" type="email" required placeholder="you@email.com" />
+                </div>
+                <div class="field">
+                  <label for="location">Country / City</label>
+                  <input id="location" name="location" type="text" placeholder="e.g. Miami, USA" />
+                </div>
+              </div>
+              <div class="field">
+                <label for="role">Role</label>
+                <select id="role" name="role" required>
+                  <option value="" disabled selected>Select your role</option>
+                  <option>Artist</option>
+                  <option>Producer</option>
+                  <option>Director / Creative</option>
+                  <option>Manager</option>
+                  <option>Record Label</option>
+                  <option>Other</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="project">Tell us about your project (optional)</label>
+                <textarea id="project" name="project" placeholder="What do you want to create with MotionDNA?"></textarea>
+              </div>
+              <button type="submit" class="btn primary">Request Beta Access</button>
+              <p class="form-note">
+                Limited spots · No spam · We'll only email you about the beta.
+              </p>
+            </form>
+
+            <div class="success" id="beta-success">
+              <div class="ico">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 13l4 4L19 7"/></svg>
+              </div>
+              <h3>You're on the list!</h3>
+              <p>
+                Thanks for requesting access. We'll reach out as the closed beta
+                opens in Q2 2026.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <footer>
+          <div class="brand" style="font-size: 14px">
+            <span class="logo" style="width: 28px; height: 28px" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 32 32" fill="none">
+                <path d="M8 20c2-8 4-8 6 0s4 8 6 0" stroke="#0b0d10" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+            Boostify MotionDNA
+          </div>
+          <div>© <span id="year"></span> Boostify · The motion model for music videos</div>
+        </footer>
+      </div>
+    </div>
+
+    <script>
+      document.getElementById("year").textContent = new Date().getFullYear();
+
+      // Sticky header border on scroll
+      var hdr = document.getElementById("hdr");
+      window.addEventListener("scroll", function () {
+        hdr.classList.toggle("scrolled", window.scrollY > 8);
+      });
+
+      // Beta form handling.
+      // To collect submissions, set FORM_ENDPOINT to a Formspree (or similar)
+      // URL, e.g. "https://formspree.io/f/abcdwxyz". If left empty, the form
+      // still works and shows a confirmation (no data is sent anywhere).
+      var FORM_ENDPOINT = "";
+      var form = document.getElementById("beta-form");
+      var success = document.getElementById("beta-success");
+
+      form.addEventListener("submit", function (e) {
+        e.preventDefault();
+        if (!form.reportValidity()) return;
+
+        var showThanks = function () {
+          form.style.display = "none";
+          success.style.display = "block";
+          success.scrollIntoView({ behavior: "smooth", block: "center" });
+        };
+
+        if (FORM_ENDPOINT) {
+          var data = new FormData(form);
+          fetch(FORM_ENDPOINT, {
+            method: "POST",
+            body: data,
+            headers: { Accept: "application/json" },
+          })
+            .then(showThanks)
+            .catch(showThanks);
+        } else {
+          showThanks();
+        }
+      });
+    </script>
+  </body>
+</html>

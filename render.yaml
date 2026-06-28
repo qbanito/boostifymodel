@@ -1,27 +1,20 @@
 # Render Blueprint — https://render.com/docs/blueprint-spec
 #
-# IMPORTANT: BOOSTIFY DATASET STUDIO is a Tauri DESKTOP app. Only the Vite/React
-# front-end can be hosted on Render (as a static site). The Rust/Tauri backend
-# (file scanning, FFmpeg, SQLite, GPU/Brev control, all `invoke()` commands)
-# CANNOT run on Render — it requires the Tauri runtime on a local machine.
-# This static deploy therefore renders the UI as a visual demo only; backend
-# features will be inert in the browser.
+# Boostify MotionDNA — marketing / early-access landing page.
+# This is a self-contained static site (landing/index.html, no build step).
 #
 # To deploy: log in to Render (convoycubano@gmail.com) ->
 # New + -> Blueprint -> connect the GitHub repo qbanito/boostifymodel ->
 # Render reads this file and creates the static site automatically.
 services:
   - type: web
-    name: boostify-dataset-studio
+    name: boostify-motiondna
     runtime: static
-    buildCommand: npm ci && npm run build
-    staticPublishPath: ./dist
+    buildCommand: "echo 'Static landing page — no build step required'"
+    staticPublishPath: ./landing
     pullRequestPreviewsEnabled: false
-    envVars:
-      - key: NODE_VERSION
-        value: "20"
     routes:
-      # SPA fallback so client-side routing resolves to index.html
+      # Single-page site: route everything to index.html
       - type: rewrite
         source: /*
         destination: /index.html
@@ -32,3 +25,6 @@ services:
       - path: /*
         name: X-Content-Type-Options
         value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
