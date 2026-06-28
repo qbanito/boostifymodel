@@ -117,6 +117,27 @@ export interface AppSettings {
   watchEnabled: boolean;
   concurrency: number;
   gpuInstance: string;
+  aiEngineUrl: string;
+  aiEngineKey: string;
+  imageModel: string;
+  videoModel: string;
+  musicModel: string;
+}
+
+/** One model installed/available on the Boostify AI Engine. */
+export interface EngineModel {
+  id: string;
+  domain: string; // image | video | music | voice
+  label: string;
+}
+
+/** Status of the private Boostify AI Engine (installed-models inference). */
+export interface EngineStatus {
+  configured: boolean;
+  reachable: boolean;
+  baseUrl: string;
+  models: EngineModel[];
+  message: string;
 }
 
 export interface GpuInfo {
@@ -267,4 +288,23 @@ export interface BrollProgress {
   processed: number;
   total: number;
   done: boolean;
+}
+
+export interface HumoProgress {
+  sessionId: number;
+  stage: string;
+  message: string;
+  progress: number;
+  done: boolean;
+}
+
+export interface HumoStatus {
+  ok?: boolean;
+  reachable?: boolean;
+  model?: string;
+  gpu?: string;
+  model_present?: boolean;
+  busy?: boolean;
+  queued?: number;
+  api?: string;
 }

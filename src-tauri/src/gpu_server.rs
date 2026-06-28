@@ -124,3 +124,116 @@ pub fn stop(instance: &str) -> Result<GpuServerStatus, String> {
     run_brev(&["stop", instance])?;
     Ok(status(instance))
 }
+
+/// Status keywords Brev prints in the STATUS column.
+const KNOWN_STATUS: [&str; 8] = [
+    "RUNNING", "STOPPED", "STARTING", "STOPPING", "DELETING", "FAILED", "BUILDING", "PENDING",
+];
+
+/// Derive a short GPU label (e.g. "L4", "H100") from a Brev MACHINE string such
+/// as `g2-standard-4:nvidia-l4:1`.
+fn gpu_from_machine(machine: &str) -> String {
+    for part in machine.split(':') {
+        if let Some(rest) = part.strip_prefix("nvidia-") {
+            return rest.to_uppercase();
+        }
+    }
+    String::new()
+}
+
+/// Parse a single `brev ls` data row into a [`GpuServerStatus`]. Returns `None`
+/// for the header line and for wrapped continuation lines (the GPU column often
+/// wraps onto its own line in a narrow terminal).
+fn parse_row(line: &str) -> Option<GpuServerStatus> {
+    let toks: Vec<&str> = line.split_whitespace().collect();
+    if toks.len() < 2 {
+        return None;
+    }
+    let name = toks[0];
+    if name.eq_ignore_ascii_case("NAME") {
+        return None;
+    }
+    let status = toks[1].to_uppercase();
+    if !KNOWN_STATUS.contains(&status.as_str()) {
+        return None;
+    }
+    let machine = toks
+        .iter()
+        .find(|t| t.contains(':'))
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    let mut gpu = gpu_from_machine(&machine);
+    if gpu.is_empty() {
+        if let Some(last) = toks.last() {
+            if *last != name && !last.contains(':') && !last.eq_ignore_ascii_case(&status) {
+                gpu = last.to_string();
+            }
+        }
+    }
+    Some(GpuServerStatus {
+        installed: true,
+        logged_in: true,
+        instance: name.to_string(),
+        status,
+        gpu,
+        machine,
+        ssh_host: name.to_string(),
+        message: String::new(),
+    })
+}
+
+/// List ALL Brev instances in the user's org so the app can show every server,
+/// not just the one configured in settings. On error (no CLI / not logged in)
+/// returns a single placeholder status carrying the reason for the UI.
+pub fn list() -> Vec<GpuServerStatus> {
+    let placeholder = |status: &str, message: &str| GpuServerStatus {
+        installed: brev_installed(),
+        logged_in: false,
+        instance: String::new(),
+        status: status.to_string(),
+        gpu: String::new(),
+        machine: String::new(),
+        ssh_host: String::new(),
+        message: message.to_string(),
+    };
+
+    if !brev_installed() {
+        return vec![placeholder(
+            "NO_BREV",
+            "La CLI de Brev no está instalada (~/.local/bin/brev).",
+        )];
+    }
+
+    match run_brev(&["ls"]) {
+        Ok(text) => {
+            let servers: Vec<GpuServerStatus> = text.lines().filter_map(parse_row).collect();
+            if servers.is_empty() {
+                vec![GpuServerStatus {
+                    installed: true,
+                    logged_in: true,
+                    instance: String::new(),
+                    status: "EMPTY".into(),
+                    gpu: String::new(),
+                    machine: String::new(),
+                    ssh_host: String::new(),
+                    message: "No tienes instancias en tu organización de Brev.".into(),
+                }]
+            } else {
+                servers
+            }
+        }
+        Err(e) => {
+            if looks_like_login_error(&e) {
+                vec![placeholder(
+                    "NOT_LOGGED_IN",
+                    "No has iniciado sesión en Brev. Ejecuta 'brev login' en la terminal.",
+                )]
+            } else {
+                let mut p = placeholder("ERROR", &e);
+                p.logged_in = true;
+                vec![p]
+            }
+        }
+    }
+}
+

@@ -6,9 +6,9 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/controls";
 import { useToast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
-import type { AppSettings } from "@/lib/types";
+import type { AppSettings, EngineStatus } from "@/lib/types";
 import type { SharedProps } from "./Dashboard";
-import { Save, FolderOpen, Eye, Cpu, KeyRound, Sliders } from "lucide-react";
+import { Save, FolderOpen, Eye, Cpu, KeyRound, Sliders, Boxes } from "lucide-react";
 
 const DEFAULTS: AppSettings = {
   qualityThreshold: 60,
@@ -16,12 +16,17 @@ const DEFAULTS: AppSettings = {
   sceneThreshold: 0.4,
   openaiApiKey: "",
   nimApiKey: "",
-  nimModel: "meta/llama-3.2-11b-vision-instruct",
+  nimModel: "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
   outputDir: "",
   exportFormat: "cosmos-predict",
   watchEnabled: false,
   concurrency: 4,
   gpuInstance: "boostify1",
+  aiEngineUrl: "",
+  aiEngineKey: "",
+  imageModel: "flux-dev",
+  videoModel: "",
+  musicModel: "ace-step-xl-base",
 };
 
 export function SettingsPage({
@@ -32,6 +37,8 @@ export function SettingsPage({
   const { push } = useToast();
   const [s, setS] = useState<AppSettings>(DEFAULTS);
   const [saving, setSaving] = useState(false);
+  const [engine, setEngine] = useState<EngineStatus | null>(null);
+  const [probing, setProbing] = useState(false);
 
   useEffect(() => {
     api
@@ -60,6 +67,23 @@ export function SettingsPage({
     const dir = await api.pickFolder();
     if (dir) set("outputDir", dir);
   };
+
+  const probeEngine = async () => {
+    try {
+      setProbing(true);
+      await api.saveSettings(s); // persist URL/key so the backend probes the right host
+      const st = await api.aiEngineStatus();
+      setEngine(st);
+      push(st.reachable ? "success" : "error", st.message);
+    } catch (e) {
+      push("error", String(e));
+    } finally {
+      setProbing(false);
+    }
+  };
+
+  const engineModels = (domain: string) =>
+    (engine?.models ?? []).filter((m) => m.domain === domain);
 
   return (
     <>
@@ -147,18 +171,108 @@ export function SettingsPage({
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs text-bds-muted">NIM vision model</label>
+                <label className="text-xs text-bds-muted">NIM vision model (free reasoner)</label>
                 <Input
+                  list="nim-vision-models"
                   value={s.nimModel}
                   onChange={(e) => set("nimModel", e.target.value)}
-                  placeholder="meta/llama-3.2-11b-vision-instruct"
+                  placeholder="nvidia/llama-3.1-nemotron-nano-vl-8b-v1"
                 />
+                <datalist id="nim-vision-models">
+                  <option value="nvidia/llama-3.1-nemotron-nano-vl-8b-v1">Nemotron Nano VL 8B — free reasoner (default)</option>
+                  <option value="nvidia/nemotron-nano-12b-v2-vl">Nemotron Nano 12B v2 VL — free reasoner</option>
+                  <option value="meta/llama-3.2-11b-vision-instruct">Llama 3.2 11B Vision</option>
+                </datalist>
+                <p className="text-[11px] text-bds-muted">
+                  NVIDIA <code>cosmos-reason</code> no está habilitado en las keys
+                  gratuitas, así que usamos el razonador gratuito más cercano:
+                  <code> Nemotron Nano VL</code>.
+                </p>
               </div>
               <p className="text-[11px] text-bds-muted">
                 Captions describe each clip from its actual frame. OpenAI is tried
                 first, then NVIDIA NIM. Without any key the pipeline falls back to
                 a local heuristic captioner.
               </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Boxes className="h-4 w-4 text-bds-muted" />
+                Boostify AI Engine (installed models)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-1">
+                <label className="text-xs text-bds-muted">Engine URL</label>
+                <Input
+                  value={s.aiEngineUrl}
+                  onChange={(e) => set("aiEngineUrl", e.target.value)}
+                  placeholder="http://localhost:8080"
+                />
+                <p className="text-[11px] text-bds-muted">
+                  Tras <code>brev port-forward {s.gpuInstance} -p 8080:8080</code>{" "}
+                  apunta aquí para generar con tus modelos instalados (FLUX, Qwen,
+                  LTX-2.3, Wan2.2, ACE-Step). Vacío = NVIDIA cloud + Ken Burns.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-bds-muted">Engine API key</label>
+                <Input
+                  type="password"
+                  value={s.aiEngineKey}
+                  onChange={(e) => set("aiEngineKey", e.target.value)}
+                  placeholder="x-api-key"
+                />
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <ModelSelect
+                  label="Image"
+                  value={s.imageModel}
+                  fallback={["flux-dev", "flux-schnell", "qwen-image"]}
+                  models={engineModels("image")}
+                  onChange={(v) => set("imageModel", v)}
+                />
+                <ModelSelect
+                  label="Video"
+                  value={s.videoModel}
+                  allowNone
+                  noneLabel="Ken Burns (local)"
+                  fallback={["ltx-2.3", "wan-i2v", "wan-t2v", "wan-ti2v"]}
+                  models={engineModels("video")}
+                  onChange={(v) => set("videoModel", v)}
+                />
+                <ModelSelect
+                  label="Music"
+                  value={s.musicModel}
+                  fallback={["ace-step-xl-base", "ace-step-xl-sft", "ace-step-xl-turbo"]}
+                  models={engineModels("music")}
+                  onChange={(v) => set("musicModel", v)}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={probeEngine}
+                  disabled={probing || !s.aiEngineUrl.trim()}
+                >
+                  <Cpu className="h-4 w-4" />
+                  {probing ? "Probing…" : "Test connection"}
+                </Button>
+                {engine && (
+                  <Badge variant={engine.reachable ? "good" : "bad"}>
+                    {engine.reachable
+                      ? `${engine.models.length} models`
+                      : "offline"}
+                  </Badge>
+                )}
+              </div>
+              {engine && (
+                <p className="text-[11px] text-bds-muted">{engine.message}</p>
+              )}
             </CardContent>
           </Card>
 
@@ -256,6 +370,45 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
     <div className="flex items-center justify-between">
       <span className="text-bds-muted">{label}</span>
       {children}
+    </div>
+  );
+}
+
+function ModelSelect({
+  label,
+  value,
+  models,
+  fallback,
+  allowNone,
+  noneLabel,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  models: { id: string; label: string }[];
+  fallback: string[];
+  allowNone?: boolean;
+  noneLabel?: string;
+  onChange: (v: string) => void;
+}) {
+  // Prefer models advertised by the engine; otherwise show sensible defaults.
+  const ids = models.length ? models.map((m) => m.id) : fallback;
+  const options = Array.from(new Set([...ids, value].filter(Boolean)));
+  return (
+    <div className="space-y-1">
+      <label className="text-xs text-bds-muted">{label}</label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full cursor-pointer rounded-md border border-bds-border bg-bds-surface2 px-2 py-1.5 text-sm text-bds-fg"
+      >
+        {allowNone && <option value="">{noneLabel ?? "None"}</option>}
+        {options.map((id) => (
+          <option key={id} value={id}>
+            {models.find((m) => m.id === id)?.label ?? id}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }

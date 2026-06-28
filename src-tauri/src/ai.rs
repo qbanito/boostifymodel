@@ -13,6 +13,15 @@
 use crate::models::SceneAnalysis;
 use crate::splitter::FrameStats;
 
+/// Default NVIDIA NIM vision-language model used when none is configured.
+///
+/// NVIDIA's `cosmos-reason*` physical-AI reasoners are not enabled on the free
+/// trial keys, so we default to the closest free, account-accessible reasoning
+/// VLM: Nemotron Nano VL (8B). It runs on NVIDIA's hosted gateway at no cost and
+/// returns clean single-shot answers, which suits frame captioning + role
+/// classification. Override per-install via Settings (`nim_model`).
+pub const DEFAULT_NIM_VLM: &str = "nvidia/llama-3.1-nemotron-nano-vl-8b-v1";
+
 /// Local heuristic scene analysis from frame statistics + filename cues.
 /// Replace/augment with YOLO + MediaPipe results when a sidecar is available.
 pub fn analyze_scene(stats: &FrameStats, filename: &str, duration: f64) -> SceneAnalysis {
@@ -226,7 +235,7 @@ pub fn generate_caption(
 
         if !nim_key.is_empty() {
             let model = if nim_model.trim().is_empty() {
-                "meta/llama-3.2-11b-vision-instruct"
+                DEFAULT_NIM_VLM
             } else {
                 nim_model
             };
@@ -420,7 +429,7 @@ pub fn classify_role(
         }
         if raw.is_none() && !nim_key.is_empty() {
             let model = if nim_model.trim().is_empty() {
-                "meta/llama-3.2-11b-vision-instruct"
+                DEFAULT_NIM_VLM
             } else {
                 nim_model
             };

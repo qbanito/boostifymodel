@@ -16,6 +16,9 @@ import type {
   StyleReference,
   BrollCandidate,
   BrollProgress,
+  EngineStatus,
+  HumoProgress,
+  HumoStatus,
   PipelineProgress,
   ScanProgress,
   SessionMedia,
@@ -127,6 +130,18 @@ export const api = {
 
   gpuServerStop(): Promise<GpuServerStatus> {
     return invoke("gpu_server_stop");
+  },
+
+  gpuServerList(): Promise<GpuServerStatus[]> {
+    return invoke("gpu_server_list");
+  },
+
+  gpuServerStartNamed(name: string): Promise<GpuServerStatus> {
+    return invoke("gpu_server_start_named", { name });
+  },
+
+  gpuServerStopNamed(name: string): Promise<GpuServerStatus> {
+    return invoke("gpu_server_stop_named", { name });
   },
 
   // ---- Settings ----
@@ -265,6 +280,128 @@ export const api = {
 
   generateMusicVideo(sessionId: number): Promise<string> {
     return invoke("generate_music_video", { sessionId });
+  },
+
+  // ---- Boostify AI Engine (installed FLUX / Qwen / LTX / Wan / ACE-Step) ----
+  aiEngineStatus(): Promise<EngineStatus> {
+    return invoke("ai_engine_status");
+  },
+
+  generateMusicTrack(
+    prompt: string,
+    durationSeconds: number,
+    lyrics?: string | null,
+  ): Promise<string> {
+    return invoke("generate_music_track", {
+      prompt,
+      durationSeconds,
+      lyrics: lyrics && lyrics.trim() ? lyrics : null,
+    });
+  },
+
+  // ---- AI Image Studio (engine FLUX/Qwen → NVIDIA FLUX.2 Klein fallback) ----
+  async pickImageFile(): Promise<string | null> {
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: "Image", extensions: ["png", "jpg", "jpeg", "webp"] }],
+    });
+    return typeof selected === "string" ? selected : null;
+  },
+
+  aiGenerateImage(prompt: string): Promise<string> {
+    return invoke("ai_generate_image", { prompt });
+  },
+
+  aiEditImage(imagePath: string, prompt: string): Promise<string> {
+    return invoke("ai_edit_image", { imagePath, prompt });
+  },
+
+  // ---- HuMo (image + audio -> AI performance clip) ----
+  async pickHumoImage(): Promise<string | null> {
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: "Image", extensions: ["png", "jpg", "jpeg", "webp"] }],
+    });
+    return typeof selected === "string" ? selected : null;
+  },
+
+  async pickHumoAudio(): Promise<string | null> {
+    const selected = await open({
+      multiple: false,
+      filters: [
+        {
+          name: "Audio",
+          extensions: ["wav", "mp3", "m4a", "aac", "flac", "ogg", "aif", "aiff"],
+        },
+      ],
+    });
+    return typeof selected === "string" ? selected : null;
+  },
+
+  humoStatus(): Promise<HumoStatus> {
+    return invoke("humo_status");
+  },
+
+  humoGenerate(
+    sessionId: number,
+    imagePath: string,
+    audioPath: string,
+    prompt: string,
+    quality: "fast" | "standard" | "high",
+  ): Promise<SessionMedia> {
+    return invoke("humo_generate", {
+      sessionId,
+      imagePath,
+      audioPath,
+      prompt,
+      quality,
+    });
+  },
+
+  onHumoProgress(cb: (p: HumoProgress) => void): Promise<UnlistenFn> {
+    return listen<HumoProgress>("humo:progress", (e) => cb(e.payload));
+  },
+
+  // ---- Relight (re-illuminate a clip to match a 360 HDRI) ----
+  async pickHdri(): Promise<string | null> {
+    const selected = await open({
+      multiple: false,
+      filters: [
+        {
+          name: "HDRI / Environment",
+          extensions: ["hdr", "exr", "png", "jpg", "jpeg", "webp"],
+        },
+      ],
+    });
+    return typeof selected === "string" ? selected : null;
+  },
+
+  async pickRelightVideo(): Promise<string | null> {
+    const selected = await open({
+      multiple: false,
+      filters: [
+        { name: "Video", extensions: ["mp4", "mov", "m4v", "webm", "mkv"] },
+      ],
+    });
+    return typeof selected === "string" ? selected : null;
+  },
+
+  relightClip(
+    sessionId: number,
+    videoPath: string,
+    hdriPath: string,
+    intensity: number,
+  ): Promise<SessionMedia> {
+    return invoke("relight_clip", {
+      sessionId,
+      videoPath,
+      hdriPath,
+      intensity,
+    });
+  },
+
+  onRelightProgress(cb: (p: HumoProgress) => void): Promise<UnlistenFn> {
+    return listen<HumoProgress>("relight:progress", (e) => cb(e.payload));
   },
 
   syncPerformanceAudio(sessionId: number): Promise<SessionMedia[]> {

@@ -137,10 +137,36 @@ pub struct AppSettings {
     /// Name of the remote Brev GPU instance to control (start/stop) from the app.
     #[serde(default = "default_gpu_instance")]
     pub gpu_instance: String,
+    /// Base URL of the private Boostify AI Engine (FastAPI on the GPU server),
+    /// e.g. http://localhost:8080 via `brev port-forward`. Empty = use NVIDIA
+    /// cloud + local Ken Burns instead of the installed models.
+    #[serde(default)]
+    pub ai_engine_url: String,
+    /// API key for the AI Engine (sent as `x-api-key`).
+    #[serde(default)]
+    pub ai_engine_key: String,
+    /// Preferred installed image model (flux-schnell | flux-dev | qwen-image).
+    #[serde(default = "default_image_model")]
+    pub image_model: String,
+    /// Preferred installed video model (ltx-2.3 | wan-t2v | wan-i2v | wan-ti2v).
+    /// Empty = keep local Ken Burns animation for B-roll/shots.
+    #[serde(default)]
+    pub video_model: String,
+    /// Preferred installed music model (ace-step-xl-base | sft | turbo).
+    #[serde(default = "default_music_model")]
+    pub music_model: String,
 }
 
 fn default_gpu_instance() -> String {
     "boostify1".into()
+}
+
+fn default_image_model() -> String {
+    "flux-dev".into()
+}
+
+fn default_music_model() -> String {
+    "ace-step-xl-base".into()
 }
 
 impl Default for AppSettings {
@@ -151,12 +177,17 @@ impl Default for AppSettings {
             scene_threshold: 0.4,
             openai_api_key: String::new(),
             nim_api_key: String::new(),
-            nim_model: "meta/llama-3.2-11b-vision-instruct".into(),
+            nim_model: "nvidia/llama-3.1-nemotron-nano-vl-8b-v1".into(),
             output_dir: String::new(),
             export_format: "cosmos-predict".into(),
             watch_enabled: false,
             concurrency: 4,
             gpu_instance: default_gpu_instance(),
+            ai_engine_url: String::new(),
+            ai_engine_key: String::new(),
+            image_model: default_image_model(),
+            video_model: String::new(),
+            music_model: default_music_model(),
         }
     }
 }
@@ -191,6 +222,33 @@ pub struct GpuServerStatus {
     /// Human-readable message / hint for the UI.
     pub message: String,
 }
+
+/// One model installed/available on the Boostify AI Engine.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineModel {
+    pub id: String,
+    pub domain: String,
+    pub label: String,
+}
+
+/// Status of the private Boostify AI Engine (the FastAPI inference server that
+/// serves the installed FLUX/Qwen/LTX/Wan/ACE-Step models), surfaced to the UI.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineStatus {
+    /// Whether an engine URL is configured in Settings.
+    pub configured: bool,
+    /// Whether the engine answered /health.
+    pub reachable: bool,
+    /// The base URL we are talking to.
+    pub base_url: String,
+    /// Models advertised by the engine.
+    pub models: Vec<EngineModel>,
+    /// Human-readable message / hint for the UI.
+    pub message: String,
+}
+
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

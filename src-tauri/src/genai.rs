@@ -22,6 +22,7 @@ use crate::models::*;
 
 const GENAI_HOST: &str = "https://ai.api.nvidia.com/v1/genai";
 const NVCF_STATUS: &str = "https://api.nvcf.nvidia.com/v2/nvcf/exec/status";
+const NVCF_ASSETS: &str = "https://api.nvcf.nvidia.com/v2/nvcf/assets";
 
 // FLUX.1 on NVIDIA only accepts specific dimensions (multiples that include
 // 768..1344); 1344x768 is the widest valid 16:9 option for cinematic B-roll.
@@ -47,7 +48,17 @@ fn env_or(var: &str, default: &str) -> String {
 }
 
 fn image_model() -> String {
-    env_or("NVIDIA_IMAGE_MODEL", "black-forest-labs/flux.1-dev")
+    // FLUX.2 Klein 4B is NVIDIA's free, distilled (4-step) image model that
+    // supports BOTH text-to-image and image-conditioned editing — the cloud
+    // fallback used whenever the local engine (H200) is off.
+    env_or("NVIDIA_IMAGE_MODEL", "black-forest-labs/flux.2-klein-4b")
+}
+
+/// True for FLUX.2 / Klein-style models, which take `steps:4`, no `mode`/
+/// `cfg_scale`, and accept image inputs as uploaded NVCF assets.
+fn is_klein(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    m.contains("klein") || m.contains("flux.2") || m.contains("flux-2")
 }
 
 fn video_model() -> String {
@@ -325,19 +336,105 @@ fn broll_prompt(style: &StyleReference, section: &str, idea: &str) -> String {
 
 /// Generate a single still image (PNG bytes) with the NVIDIA image model.
 pub fn generate_image(key: &str, prompt: &str, seed: i64) -> Option<Vec<u8>> {
-    let url = format!("{GENAI_HOST}/{}", image_model());
-    let body = json!({
-        "prompt": prompt,
-        "mode": "base",
-        "cfg_scale": 3.5,
-        "width": GEN_W,
-        "height": GEN_H,
-        "seed": seed,
-        "steps": 40
-    });
+    let model = image_model();
+    let url = format!("{GENAI_HOST}/{model}");
+    let body = if is_klein(&model) {
+        // FLUX.2 Klein: distilled 4-step, no cfg/mode knobs.
+        json!({
+            "prompt": prompt,
+            "width": GEN_W,
+            "height": GEN_H,
+            "seed": seed,
+            "steps": 4
+        })
+    } else {
+        json!({
+            "prompt": prompt,
+            "mode": "base",
+            "cfg_scale": 3.5,
+            "width": GEN_W,
+            "height": GEN_H,
+            "seed": seed,
+            "steps": 40
+        })
+    };
     let v = nv_invoke(&url, key, body)?;
     let b64 = find_b64(&v)?;
     decode_b64(&b64)
+}
+
+/// Edit an existing image (PNG/JPEG bytes) with a text instruction using the
+/// NVIDIA image model (FLUX.2 Klein supports image-conditioned editing). The
+/// input is uploaded as an NVCF asset and referenced by index, per NVIDIA's
+/// genai API. Returns the edited image (PNG/JPEG bytes) or `None`.
+pub fn edit_image(key: &str, image: &[u8], prompt: &str, seed: i64) -> Option<Vec<u8>> {
+    let model = image_model();
+    if !is_klein(&model) {
+        eprintln!("[genai] edit_image needs a FLUX.2/Klein model (got {model})");
+        return None;
+    }
+    let ct = sniff_image_ct(image);
+    let asset = nvcf_upload_asset(key, image, ct, "boostify-edit-input")?;
+    let url = format!("{GENAI_HOST}/{model}");
+    // The image is referenced by its index (0) into NVCF-INPUT-ASSET-REFERENCES;
+    // the literal token is `example_id`. No width/height → preserve input size.
+    let body = json!({
+        "prompt": prompt,
+        "image": [format!("data:{ct};example_id,0")],
+        "seed": seed,
+        "steps": 4
+    });
+    let v = nv_invoke_with_assets(&url, key, body, &asset)?;
+    let b64 = find_b64(&v)?;
+    decode_b64(&b64)
+}
+
+/// Sniff a PNG/JPEG/WebP content type from the leading magic bytes.
+fn sniff_image_ct(b: &[u8]) -> &'static str {
+    if b.len() >= 8 && &b[0..8] == b"\x89PNG\r\n\x1a\n" {
+        "image/png"
+    } else if b.len() >= 3 && &b[0..3] == b"\xff\xd8\xff" {
+        "image/jpeg"
+    } else if b.len() >= 12 && &b[0..4] == b"RIFF" && &b[8..12] == b"WEBP" {
+        "image/webp"
+    } else {
+        "image/png"
+    }
+}
+
+/// Reserve + upload an NVCF asset, returning its `assetId`. Used to pass image
+/// inputs to genai models that don't accept inline base64 (e.g. FLUX.2 Klein).
+fn nvcf_upload_asset(key: &str, bytes: &[u8], content_type: &str, desc: &str) -> Option<String> {
+    // 1) Reserve an asset slot → { assetId, uploadUrl }.
+    let reserved = match ureq::post(NVCF_ASSETS)
+        .set("Authorization", &format!("Bearer {key}"))
+        .set("Accept", "application/json")
+        .set("Content-Type", "application/json")
+        .timeout(Duration::from_secs(60))
+        .send_json(json!({ "contentType": content_type, "description": desc }))
+    {
+        Ok(r) => r.into_json::<Value>().ok()?,
+        Err(e) => {
+            eprintln!("[genai] asset reserve failed: {e}");
+            return None;
+        }
+    };
+    let asset_id = reserved.get("assetId").and_then(|v| v.as_str())?.to_string();
+    let upload_url = reserved.get("uploadUrl").and_then(|v| v.as_str())?.to_string();
+
+    // 2) PUT the bytes to the presigned URL (no auth header — it's presigned).
+    match ureq::put(&upload_url)
+        .set("Content-Type", content_type)
+        .set("x-amz-meta-nvcf-asset-description", desc)
+        .timeout(Duration::from_secs(120))
+        .send_bytes(bytes)
+    {
+        Ok(_) => Some(asset_id),
+        Err(e) => {
+            eprintln!("[genai] asset upload failed: {e}");
+            None
+        }
+    }
 }
 
 /// Animate a still image into a short video clip (MP4 bytes) with the NVIDIA
@@ -397,12 +494,26 @@ fn resize_png(png: &[u8], w: u32, h: u32) -> Option<Vec<u8>> {
 /// POST to a genai endpoint, transparently polling NVCF when the result is
 /// produced asynchronously (HTTP 202 + `NVCF-REQID`).
 fn nv_invoke(url: &str, key: &str, body: Value) -> Option<Value> {
-    let resp = ureq::post(url)
+    nv_invoke_inner(url, key, body, None)
+}
+
+/// Like `nv_invoke` but references uploaded NVCF input assets (comma-separated
+/// asset ids) via the `NVCF-INPUT-ASSET-REFERENCES` header — required for image
+/// editing on FLUX.2 Klein.
+fn nv_invoke_with_assets(url: &str, key: &str, body: Value, asset_refs: &str) -> Option<Value> {
+    nv_invoke_inner(url, key, body, Some(asset_refs))
+}
+
+fn nv_invoke_inner(url: &str, key: &str, body: Value, asset_refs: Option<&str>) -> Option<Value> {
+    let mut req = ureq::post(url)
         .set("Authorization", &format!("Bearer {key}"))
         .set("Accept", "application/json")
         .set("Content-Type", "application/json")
-        .timeout(Duration::from_secs(180))
-        .send_json(body);
+        .timeout(Duration::from_secs(180));
+    if let Some(refs) = asset_refs {
+        req = req.set("NVCF-INPUT-ASSET-REFERENCES", refs);
+    }
+    let resp = req.send_json(body);
 
     match resp {
         Ok(r) => {

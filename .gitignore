@@ -39,3 +39,11 @@ dist-ssr
 # Remotion build artifacts (source-controlled output lives in landing/assets)
 /remotion/out
 /remotion/public
+
+# Local Netlify folder
+.netlify
+
+# Heavy local artifacts (not source) — kept out of the repo
+demo-datasets/
+.venv-demo/
+boostify-ai-engine/

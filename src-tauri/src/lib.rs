@@ -3,11 +3,14 @@ mod audio;
 mod dataset;
 mod db;
 mod editor;
+mod engine;
 mod genai;
 mod gpu_server;
+mod humo;
 mod models;
 mod mvgen;
 mod pipeline;
+mod relight;
 mod premiere;
 mod probe;
 mod scanner;
@@ -553,6 +556,103 @@ fn capture_style_reference(
 /// `animate` is true each still is also turned into a short video clip. Without
 /// an API key the shots are still planned (prompt only) so the user sees the
 /// plan. Emits `broll:progress` events; persists each candidate as it lands.
+/// Render a still image for a shot/B-roll. Prefers an installed engine model
+/// (FLUX / Qwen) when an AI Engine URL is configured in Settings, and falls
+/// back to the NVIDIA cloud image model otherwise. Returns the PNG bytes.
+fn render_still(settings: &AppSettings, nvidia_key: &str, prompt: &str, seed: i64) -> Option<Vec<u8>> {
+    if engine::is_configured(settings) {
+        let model = if settings.image_model.trim().is_empty() {
+            "flux-dev"
+        } else {
+            settings.image_model.trim()
+        };
+        match engine::generate_image(settings, prompt, model, 1280, 720, 28, None, seed) {
+            Ok(png) => return Some(png),
+            Err(e) => eprintln!("[engine] image generation failed, trying NVIDIA: {e}"),
+        }
+    }
+    if !nvidia_key.is_empty() {
+        if let Some(png) = genai::generate_image(nvidia_key, prompt, seed) {
+            return Some(png);
+        }
+    }
+    None
+}
+
+/// Edit a still with a text instruction. Prefers the installed engine edit
+/// model (Qwen-Image-Edit) and falls back to NVIDIA's hosted FLUX.2 Klein 4B
+/// whenever the engine (H200) is off. Returns the edited image bytes.
+fn edit_still(
+    settings: &AppSettings,
+    nvidia_key: &str,
+    image: &[u8],
+    prompt: &str,
+    seed: i64,
+) -> Option<Vec<u8>> {
+    if engine::is_configured(settings) {
+        let model = if settings.image_model.trim().is_empty() {
+            "qwen-image"
+        } else {
+            settings.image_model.trim()
+        };
+        match engine::edit_image(settings, image, prompt, model, 30, seed) {
+            Ok(png) => return Some(png),
+            Err(e) => eprintln!("[engine] image edit failed, trying NVIDIA: {e}"),
+        }
+    }
+    if !nvidia_key.is_empty() {
+        if let Some(png) = genai::edit_image(nvidia_key, image, prompt, seed) {
+            return Some(png);
+        }
+    }
+    None
+}
+
+/// Turn a still into a moving clip. Prefers real image-to-video on the engine
+/// (LTX-2.3 / Wan2.2) when a video model is configured, otherwise renders the
+/// reliable local Ken Burns animation. Writes an MP4 to `out` and returns true.
+#[allow(clippy::too_many_arguments)]
+fn render_clip(
+    settings: &AppSettings,
+    img_path: &std::path::Path,
+    png: &[u8],
+    prompt: &str,
+    out: &std::path::Path,
+    seconds: f64,
+    fps: f64,
+    variant: u8,
+    seed: i64,
+) -> bool {
+    if engine::is_configured(settings) && !settings.video_model.trim().is_empty() {
+        let f = if fps.is_finite() && fps > 1.0 { fps } else { 24.0 };
+        let frames = ((seconds * f).round() as i64).clamp(9, 257) as u32;
+        match engine::generate_video(
+            settings,
+            prompt,
+            settings.video_model.trim(),
+            "i2v",
+            1280,
+            704,
+            frames,
+            f as u32,
+            Some(png),
+            None,
+            seed,
+        ) {
+            Ok(mp4) => {
+                if let Some(parent) = out.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if std::fs::write(out, &mp4).is_ok() && out.exists() {
+                    return true;
+                }
+            }
+            Err(e) => eprintln!("[engine] image-to-video failed, using Ken Burns: {e}"),
+        }
+    }
+    genai::animate_still_local(img_path, out, seconds, fps, variant)
+}
+
 #[tauri::command]
 fn generate_broll(
     session_id: i64,
@@ -619,9 +719,7 @@ fn generate_broll(
             created_at: String::new(),
         };
 
-        if key.is_empty() {
-            cand.note = Some("Add an NVIDIA API key in Settings to render this shot.".into());
-        } else if let Some(png) = genai::generate_image(&key, &plan.prompt, plan.seed) {
+        if let Some(png) = render_still(&settings, &key, &plan.prompt, plan.seed) {
             let img_path = out_dir.join(format!("img_{}_{}.png", i, nanos()));
             if std::fs::write(&img_path, &png).is_ok() {
                 cand.image_path = Some(img_path.to_string_lossy().to_string());
@@ -639,12 +737,16 @@ fn generate_broll(
                 let img_path = std::path::PathBuf::from(cand.image_path.clone().unwrap());
                 let vid_path = out_dir.join(format!("clip_{}_{}.mp4", i, nanos()));
                 let secs = genai::section_clip_seconds(&plan.section);
-                let animated = genai::animate_still_local(
+                let animated = render_clip(
+                    &settings,
                     &img_path,
+                    &png,
+                    &plan.prompt,
                     &vid_path,
                     secs,
                     session.sequence_fps,
                     i as u8,
+                    plan.seed,
                 );
                 if animated {
                     cand.video_path = Some(vid_path.to_string_lossy().to_string());
@@ -654,12 +756,15 @@ fn generate_broll(
                         cand.thumbnail_path = Some(thumb.to_string_lossy().to_string());
                     }
                 } else {
-                    cand.note = Some("Image ready — local animation failed.".into());
+                    cand.note = Some("Image ready — animation failed.".into());
                 }
             }
+        } else if !engine::is_configured(&settings) && key.is_empty() {
+            cand.note =
+                Some("Configure the AI Engine or add an NVIDIA API key in Settings.".into());
         } else {
             cand.status = "failed".into();
-            cand.note = Some("Image generation failed (check NVIDIA key/quota).".into());
+            cand.note = Some("Image generation failed (check engine / NVIDIA quota).".into());
         }
 
         let conn = state.conn.lock().unwrap();
@@ -700,8 +805,11 @@ fn generate_music_video(
     };
 
     let key = genai::resolve_key(&settings);
-    if key.is_empty() {
-        return Err("Add an NVIDIA API key in Settings to generate the music video.".into());
+    if key.is_empty() && !engine::is_configured(&settings) {
+        return Err(
+            "Configure the AI Engine or add an NVIDIA API key in Settings to generate the music video."
+                .into(),
+        );
     }
 
     let master = media
@@ -743,7 +851,7 @@ fn generate_music_video(
             false,
         );
 
-        let png = match genai::generate_image(&key, &shot.prompt, shot.seed) {
+        let png = match render_still(&settings, &key, &shot.prompt, shot.seed) {
             Some(p) => p,
             None => continue,
         };
@@ -759,19 +867,23 @@ fn generate_music_video(
             false,
         );
         let clip_path = out_dir.join(format!("shot_{:03}.mp4", shot.index));
-        if genai::animate_still_local(
+        if render_clip(
+            &settings,
             &img_path,
+            &png,
+            &shot.prompt,
             &clip_path,
             shot.duration,
             session.sequence_fps,
             shot.motion,
+            shot.seed,
         ) {
             clips.push(clip_path);
         }
     }
 
     if clips.is_empty() {
-        return Err("No shots were generated (check the NVIDIA key/quota).".into());
+        return Err("No shots were generated (check the engine / NVIDIA quota).".into());
     }
 
     emit("assemble", "Assembling the final music video…".into(), total, false);
@@ -788,6 +900,153 @@ fn generate_music_video(
     );
 
     Ok(final_path.to_string_lossy().to_string())
+}
+
+/// Probe the private AI Engine and report whether it is configured, reachable,
+/// and which installed models it serves (so the UI can show a status badge and
+/// populate the model selectors).
+#[tauri::command]
+fn ai_engine_status(state: State<'_, Arc<AppState>>) -> EngineStatus {
+    let settings = {
+        let conn = state.conn.lock().unwrap();
+        state.load_settings(&conn)
+    };
+    engine::status(&settings)
+}
+
+/// Generate an original music track with the installed ACE-Step model and save
+/// it under the session work dir. Returns the absolute path of the WAV file.
+/// Requires the AI Engine to be configured (this is the only music backend).
+#[tauri::command]
+fn generate_music_track(
+    prompt: String,
+    duration_seconds: i64,
+    lyrics: Option<String>,
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<String, String> {
+    let settings = {
+        let conn = state.conn.lock().unwrap();
+        state.load_settings(&conn)
+    };
+    if !engine::is_configured(&settings) {
+        return Err("Configure the AI Engine URL in Settings to generate music.".into());
+    }
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return Err("Describe the music you want to generate.".into());
+    }
+
+    let model = if settings.music_model.trim().is_empty() {
+        "ace-step-xl-base"
+    } else {
+        settings.music_model.trim()
+    };
+    let kind = if lyrics.as_deref().map(|l| !l.trim().is_empty()).unwrap_or(false) {
+        "song"
+    } else {
+        "instrumental"
+    };
+    let secs = duration_seconds.clamp(4, 300);
+    let seed = (nanos() as i64) & 0x7fff_ffff;
+
+    log(&app, format!("Generating music ({model}, {secs}s)…"));
+    let wav = engine::generate_music(
+        &settings,
+        prompt,
+        model,
+        kind,
+        secs,
+        lyrics.as_deref(),
+        None,
+        seed,
+    )?;
+
+    let out_dir = state.work_dir().join("music");
+    std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+    let out_path = out_dir.join(format!("track_{}.wav", nanos()));
+    std::fs::write(&out_path, &wav).map_err(|e| e.to_string())?;
+    log(&app, format!("Music saved: {}", out_path.display()));
+
+    Ok(out_path.to_string_lossy().to_string())
+}
+
+/// Generate a still image from a text prompt. Prefers the installed engine
+/// image model, falling back to NVIDIA's hosted FLUX.2 Klein 4B when the engine
+/// (H200) is off. Returns the saved PNG path so the UI can preview it.
+#[tauri::command]
+fn ai_generate_image(
+    prompt: String,
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<String, String> {
+    let settings = {
+        let conn = state.conn.lock().unwrap();
+        state.load_settings(&conn)
+    };
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return Err("Describe the image you want to generate.".into());
+    }
+    let key = genai::resolve_key(&settings);
+    if !engine::is_configured(&settings) && key.is_empty() {
+        return Err(
+            "Set the AI Engine URL or an NVIDIA API key in Settings to generate images.".into(),
+        );
+    }
+    let seed = (nanos() as i64) & 0x7fff_ffff;
+    log(&app, "Generating image…".to_string());
+    let png = render_still(&settings, &key, prompt, seed)
+        .ok_or_else(|| "image generation failed (engine off and NVIDIA fallback failed).".to_string())?;
+
+    let out_dir = state.work_dir().join("ai_images");
+    std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+    let out_path = out_dir.join(format!("img_{}.png", nanos()));
+    std::fs::write(&out_path, &png).map_err(|e| e.to_string())?;
+    log(&app, format!("Image saved: {}", out_path.display()));
+    Ok(out_path.to_string_lossy().to_string())
+}
+
+/// Edit an existing image with a text instruction. Prefers the installed engine
+/// edit model, falling back to NVIDIA FLUX.2 Klein 4B when the engine is off.
+/// Returns the saved edited PNG path.
+#[tauri::command]
+fn ai_edit_image(
+    image_path: String,
+    prompt: String,
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<String, String> {
+    let settings = {
+        let conn = state.conn.lock().unwrap();
+        state.load_settings(&conn)
+    };
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return Err("Describe the edit you want to make.".into());
+    }
+    let src = std::path::Path::new(&image_path);
+    if !src.exists() {
+        return Err("the selected image file does not exist".into());
+    }
+    let bytes = std::fs::read(src).map_err(|e| format!("read image: {e}"))?;
+    let key = genai::resolve_key(&settings);
+    if !engine::is_configured(&settings) && key.is_empty() {
+        return Err(
+            "Set the AI Engine URL or an NVIDIA API key in Settings to edit images.".into(),
+        );
+    }
+    let seed = (nanos() as i64) & 0x7fff_ffff;
+    log(&app, "Editing image…".to_string());
+    let edited = edit_still(&settings, &key, &bytes, prompt, seed)
+        .ok_or_else(|| "image edit failed (engine off and NVIDIA fallback failed).".to_string())?;
+
+    let out_dir = state.work_dir().join("ai_images");
+    std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+    let out_path = out_dir.join(format!("edit_{}.png", nanos()));
+    std::fs::write(&out_path, &edited).map_err(|e| e.to_string())?;
+    log(&app, format!("Edited image saved: {}", out_path.display()));
+    Ok(out_path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -1313,6 +1572,21 @@ fn gpu_server_stop(state: State<'_, Arc<AppState>>) -> Result<GpuServerStatus, S
     gpu_server::stop(&inst)
 }
 
+#[tauri::command]
+fn gpu_server_list() -> Vec<GpuServerStatus> {
+    gpu_server::list()
+}
+
+#[tauri::command]
+fn gpu_server_start_named(name: String) -> Result<GpuServerStatus, String> {
+    gpu_server::start(name.trim())
+}
+
+#[tauri::command]
+fn gpu_server_stop_named(name: String) -> Result<GpuServerStatus, String> {
+    gpu_server::stop(name.trim())
+}
+
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
@@ -1393,6 +1667,9 @@ pub fn run() {
             add_session_media,
             set_session_media_role,
             delete_session_media,
+            humo::humo_generate,
+            humo::humo_status,
+            relight::relight_clip,
             analyze_master_audio,
             get_master_analysis,
             build_session_edl,
@@ -1404,6 +1681,10 @@ pub fn run() {
             capture_style_reference,
             generate_broll,
             generate_music_video,
+            ai_engine_status,
+            generate_music_track,
+            ai_generate_image,
+            ai_edit_image,
             list_broll,
             insert_broll,
             delete_broll,
@@ -1421,6 +1702,9 @@ pub fn run() {
             gpu_server_status,
             gpu_server_start,
             gpu_server_stop,
+            gpu_server_list,
+            gpu_server_start_named,
+            gpu_server_stop_named,
             get_settings,
             save_settings,
             set_watch,

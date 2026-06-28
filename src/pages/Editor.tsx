@@ -14,6 +14,9 @@ import type {
   StyleReference,
   BrollCandidate,
   BrollProgress,
+  EngineStatus,
+  HumoProgress,
+  HumoStatus,
   MasterAnalysis,
   MediaRole,
   SessionMedia,
@@ -45,6 +48,8 @@ import {
   Pause,
   Search,
   Database,
+  Boxes,
+  Disc3,
 } from "lucide-react";
 
 const SEQ_FPS_OPTIONS = [23.976, 24, 25, 29.97, 30, 50, 60];
@@ -93,12 +98,40 @@ export function Editor() {
   const [animateBroll, setAnimateBroll] = useState(true);
   const [generatingBroll, setGeneratingBroll] = useState(false);
   const [brollProgress, setBrollProgress] = useState<BrollProgress | null>(null);
+  const [humoImage, setHumoImage] = useState<string | null>(null);
+  const [humoAudio, setHumoAudio] = useState<string | null>(null);
+  const [humoPrompt, setHumoPrompt] = useState("");
+  const [humoQuality, setHumoQuality] = useState<"fast" | "standard" | "high">(
+    "fast"
+  );
+  const [humoBusy, setHumoBusy] = useState(false);
+  const [humoProgress, setHumoProgress] = useState<HumoProgress | null>(null);
+  const [humoServer, setHumoServer] = useState<HumoStatus | null>(null);
+  const [relightVideo, setRelightVideo] = useState<string | null>(null);
+  const [relightHdri, setRelightHdri] = useState<string | null>(null);
+  const [relightIntensity, setRelightIntensity] = useState(0.8);
+  const [relightBusy, setRelightBusy] = useState(false);
+  const [relightProgress, setRelightProgress] = useState<HumoProgress | null>(
+    null
+  );
+  const [engine, setEngine] = useState<EngineStatus | null>(null);
+  const [musicPrompt, setMusicPrompt] = useState("");
+  const [musicLyrics, setMusicLyrics] = useState("");
+  const [musicSeconds, setMusicSeconds] = useState(30);
+  const [musicBusy, setMusicBusy] = useState(false);
+  const [musicPath, setMusicPath] = useState<string | null>(null);
+  const [aiImgPrompt, setAiImgPrompt] = useState("");
+  const [aiImgBusy, setAiImgBusy] = useState(false);
+  const [aiImgPath, setAiImgPath] = useState<string | null>(null);
+  const [aiEditSrc, setAiEditSrc] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ src: string; title: string } | null>(
     null
   );
   const playerSeekRef = useRef<((t: number) => void) | null>(null);
   const progressUnlisten = useRef<(() => void) | null>(null);
   const brollUnlisten = useRef<(() => void) | null>(null);
+  const humoUnlisten = useRef<(() => void) | null>(null);
+  const relightUnlisten = useRef<(() => void) | null>(null);
 
   const active = useMemo(
     () => sessions.find((s) => s.id === activeId) ?? null,
@@ -200,6 +233,78 @@ export function Editor() {
       brollUnlisten.current = null;
     };
   }, [activeId]);
+
+  // Subscribe to HuMo (AI performance clip) generation progress.
+  useEffect(() => {
+    let mounted = true;
+    api
+      .onHumoProgress((p) => {
+        if (!mounted) return;
+        if (activeId != null && p.sessionId === activeId) {
+          setHumoProgress(p.done ? null : p);
+        }
+      })
+      .then((un) => {
+        humoUnlisten.current = un;
+      });
+    return () => {
+      mounted = false;
+      humoUnlisten.current?.();
+      humoUnlisten.current = null;
+    };
+  }, [activeId]);
+
+  // Subscribe to Relight (HDRI re-lighting) progress.
+  useEffect(() => {
+    let mounted = true;
+    api
+      .onRelightProgress((p) => {
+        if (!mounted) return;
+        if (activeId != null && p.sessionId === activeId) {
+          setRelightProgress(p.done ? null : p);
+        }
+      })
+      .then((un) => {
+        relightUnlisten.current = un;
+      });
+    return () => {
+      mounted = false;
+      relightUnlisten.current?.();
+      relightUnlisten.current = null;
+    };
+  }, [activeId]);
+
+  // Probe whether the HuMo render server is reachable (best-effort).
+  useEffect(() => {
+    let mounted = true;
+    api
+      .humoStatus()
+      .then((s) => {
+        if (mounted) setHumoServer(s);
+      })
+      .catch(() => {
+        if (mounted) setHumoServer({ ok: false, reachable: false });
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [activeId]);
+
+  // Probe the Boostify AI Engine (installed FLUX/Qwen/LTX/Wan/ACE-Step models).
+  useEffect(() => {
+    let mounted = true;
+    api
+      .aiEngineStatus()
+      .then((st) => {
+        if (mounted) setEngine(st);
+      })
+      .catch(() => {
+        if (mounted) setEngine(null);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   // Subscribe to performance lip-sync progress.
   useEffect(() => {
@@ -525,7 +630,166 @@ export function Editor() {
     }
   };
 
-  const insertBroll = async (c: BrollCandidate) => {
+  const pickHumoImage = async () => {
+    try {
+      const p = await api.pickHumoImage();
+      if (p) setHumoImage(p);
+    } catch (e) {
+      push("error", String(e));
+    }
+  };
+
+  const pickHumoAudio = async () => {
+    try {
+      const p = await api.pickHumoAudio();
+      if (p) setHumoAudio(p);
+    } catch (e) {
+      push("error", String(e));
+    }
+  };
+
+  const generateHumo = async () => {
+    if (!active) return;
+    if (!humoImage || !humoAudio) {
+      push("error", "Pick a reference image and an audio clip first");
+      return;
+    }
+    setHumoBusy(true);
+    setHumoProgress(null);
+    try {
+      await api.humoGenerate(
+        active.id,
+        humoImage,
+        humoAudio,
+        humoPrompt,
+        humoQuality
+      );
+      await loadMedia(active.id);
+      push("success", "AI performance clip added to Performance media");
+    } catch (e) {
+      push("error", String(e));
+    } finally {
+      setHumoBusy(false);
+      setHumoProgress(null);
+    }
+  };
+
+  const pickRelightVideo = async () => {
+    try {
+      const p = await api.pickRelightVideo();
+      if (p) setRelightVideo(p);
+    } catch (e) {
+      push("error", String(e));
+    }
+  };
+
+  const pickRelightHdri = async () => {
+    try {
+      const p = await api.pickHdri();
+      if (p) setRelightHdri(p);
+    } catch (e) {
+      push("error", String(e));
+    }
+  };
+
+  const generateRelight = async () => {
+    if (!active) return;
+    if (!relightVideo || !relightHdri) {
+      push("error", "Pick a clip and an HDRI environment map first");
+      return;
+    }
+    setRelightBusy(true);
+    setRelightProgress(null);
+    try {
+      await api.relightClip(
+        active.id,
+        relightVideo,
+        relightHdri,
+        relightIntensity
+      );
+      await loadMedia(active.id);
+      push("success", "Relit clip added to session media");
+    } catch (e) {
+      push("error", String(e));
+    } finally {
+      setRelightBusy(false);
+      setRelightProgress(null);
+    }
+  };
+
+  const generateMusic = async () => {
+    if (!musicPrompt.trim()) {
+      push("error", "Describe the music you want to generate");
+      return;
+    }
+    setMusicBusy(true);
+    setMusicPath(null);
+    try {
+      const path = await api.generateMusicTrack(
+        musicPrompt,
+        musicSeconds,
+        musicLyrics,
+      );
+      setMusicPath(path);
+      push("success", "Music generated with ACE-Step — playing below.");
+    } catch (e) {
+      push("error", String(e));
+    } finally {
+      setMusicBusy(false);
+    }
+  };
+
+  const generateAiImage = async () => {
+    if (!aiImgPrompt.trim()) {
+      push("error", "Describe the image you want to generate");
+      return;
+    }
+    setAiImgBusy(true);
+    setAiImgPath(null);
+    try {
+      const path = await api.aiGenerateImage(aiImgPrompt);
+      setAiImgPath(path);
+      push("success", "Image generated — preview below.");
+    } catch (e) {
+      push("error", String(e));
+    } finally {
+      setAiImgBusy(false);
+    }
+  };
+
+  const pickAiEditSrc = async () => {
+    try {
+      const path = await api.pickImageFile();
+      if (path) setAiEditSrc(path);
+    } catch (e) {
+      push("error", String(e));
+    }
+  };
+
+  const editAiImage = async () => {
+    const src = aiEditSrc ?? aiImgPath;
+    if (!src) {
+      push("error", "Pick an image to edit first");
+      return;
+    }
+    if (!aiImgPrompt.trim()) {
+      push("error", "Describe the edit you want to make");
+      return;
+    }
+    setAiImgBusy(true);
+    try {
+      const path = await api.aiEditImage(src, aiImgPrompt);
+      setAiImgPath(path);
+      setAiEditSrc(path);
+      push("success", "Image edited — preview below.");
+    } catch (e) {
+      push("error", String(e));
+    } finally {
+      setAiImgBusy(false);
+    }
+  };
+
+
     if (!active) return;
     try {
       await api.insertBroll(c.id);
@@ -911,6 +1175,7 @@ export function Editor() {
                   animate={animateBroll}
                   busy={generatingBroll}
                   progress={brollProgress}
+                  engine={engine}
                   onCount={setBrollCount}
                   onAnimate={setAnimateBroll}
                   onGenerate={generateBroll}
@@ -921,6 +1186,397 @@ export function Editor() {
                   onPreview={(src, title) => setPreview({ src, title })}
                 />
               )}
+
+              {/* HuMo — image + audio → AI performance clip */}
+              <div className="border-b border-bds-border bg-bds-surface/40 px-4 py-3">
+                <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+                  <Badge variant="accent" className="gap-1">
+                    <Sparkles className="h-3 w-3" />
+                    HuMo AI Performance
+                  </Badge>
+                  {humoServer?.ok ? (
+                    <Badge variant="info" className="text-[9px]">
+                      H100 online{humoServer.busy ? " · busy" : ""}
+                    </Badge>
+                  ) : (
+                    <Badge variant="default" className="text-[9px]">
+                      server offline
+                    </Badge>
+                  )}
+                  <span className="text-bds-muted">
+                    Turn a photo + an audio clip into a lip-synced performance
+                    shot (HuMo-17B on the H100), dropped into Performance media
+                  </span>
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <button
+                    onClick={pickHumoImage}
+                    disabled={humoBusy}
+                    className="flex items-center gap-2 rounded-md border border-bds-border bg-bds-surface2/40 px-2.5 py-2 text-left text-[11px] text-bds-muted cursor-pointer hover:text-bds-fg disabled:opacity-50"
+                  >
+                    <FileVideo className="h-4 w-4 shrink-0" />
+                    <span className="truncate">
+                      {humoImage
+                        ? humoImage.split(/[\\/]/).pop()
+                        : "Pick reference image…"}
+                    </span>
+                  </button>
+                  <button
+                    onClick={pickHumoAudio}
+                    disabled={humoBusy}
+                    className="flex items-center gap-2 rounded-md border border-bds-border bg-bds-surface2/40 px-2.5 py-2 text-left text-[11px] text-bds-muted cursor-pointer hover:text-bds-fg disabled:opacity-50"
+                  >
+                    <AudioLines className="h-4 w-4 shrink-0" />
+                    <span className="truncate">
+                      {humoAudio
+                        ? humoAudio.split(/[\\/]/).pop()
+                        : "Pick audio clip…"}
+                    </span>
+                  </button>
+                </div>
+
+                <input
+                  type="text"
+                  value={humoPrompt}
+                  onChange={(e) => setHumoPrompt(e.target.value)}
+                  disabled={humoBusy}
+                  placeholder="Prompt (optional) — e.g. the artist singing to camera, moody stage lighting"
+                  className="mt-2 w-full rounded-md border border-bds-border bg-bds-surface2/40 px-2.5 py-2 text-[11px] text-bds-fg outline-none placeholder:text-bds-muted focus:border-bds-accent"
+                />
+
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <select
+                    value={humoQuality}
+                    onChange={(e) =>
+                      setHumoQuality(
+                        e.target.value as "fast" | "standard" | "high"
+                      )
+                    }
+                    disabled={humoBusy}
+                    className="rounded-md border border-bds-border bg-bds-surface2/40 px-2 py-1.5 text-[11px] text-bds-fg outline-none focus:border-bds-accent"
+                  >
+                    <option value="fast">Fast · 480p · 30 steps</option>
+                    <option value="standard">Standard · 480p · 50 steps</option>
+                    <option value="high">High · 720p · 50 steps</option>
+                  </select>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={generateHumo}
+                    disabled={humoBusy || !humoImage || !humoAudio}
+                  >
+                    {humoBusy ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-4 w-4" />
+                    )}
+                    Generate AI performance
+                  </Button>
+                  {!humoServer?.ok && (
+                    <span className="text-[10px] text-bds-muted">
+                      Start the tunnel: brev port-forward boostify-wan -p
+                      8000:8000
+                    </span>
+                  )}
+                </div>
+
+                {humoProgress && (
+                  <div className="mt-2">
+                    <div className="mb-1 flex items-center justify-between text-[10px] text-bds-muted">
+                      <span className="truncate">{humoProgress.message}</span>
+                      <span>
+                        {Math.round((humoProgress.progress ?? 0) * 100)}%
+                      </span>
+                    </div>
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-bds-surface2">
+                      <div
+                        className="h-full rounded-full bg-bds-accent transition-all"
+                        style={{
+                          width: `${Math.round(
+                            (humoProgress.progress ?? 0) * 100
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* NVIDIA Relight — re-light a clip to match a 360 HDRI */}
+              <div className="border-b border-bds-border bg-bds-surface/40 px-4 py-3">
+                <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+                  <Badge variant="accent" className="gap-1">
+                    <Sparkles className="h-3 w-3" />
+                    Relight (HDRI)
+                  </Badge>
+                  {engine?.reachable ? (
+                    <Badge variant="info" className="text-[9px]">
+                      engine online
+                    </Badge>
+                  ) : (
+                    <Badge variant="default" className="text-[9px]">
+                      engine offline
+                    </Badge>
+                  )}
+                  <span className="text-bds-muted">
+                    Re-illuminate the people in a clip to match the lighting of a
+                    360° HDRI environment map (NVIDIA Relight)
+                  </span>
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <button
+                    onClick={pickRelightVideo}
+                    disabled={relightBusy}
+                    className="flex items-center gap-2 rounded-md border border-bds-border bg-bds-surface2/40 px-2.5 py-2 text-left text-[11px] text-bds-muted cursor-pointer hover:text-bds-fg disabled:opacity-50"
+                  >
+                    <FileVideo className="h-4 w-4 shrink-0" />
+                    <span className="truncate">
+                      {relightVideo
+                        ? relightVideo.split(/[\\/]/).pop()
+                        : "Pick clip to relight…"}
+                    </span>
+                  </button>
+                  <button
+                    onClick={pickRelightHdri}
+                    disabled={relightBusy}
+                    className="flex items-center gap-2 rounded-md border border-bds-border bg-bds-surface2/40 px-2.5 py-2 text-left text-[11px] text-bds-muted cursor-pointer hover:text-bds-fg disabled:opacity-50"
+                  >
+                    <Sparkles className="h-4 w-4 shrink-0" />
+                    <span className="truncate">
+                      {relightHdri
+                        ? relightHdri.split(/[\\/]/).pop()
+                        : "Pick 360° HDRI map…"}
+                    </span>
+                  </button>
+                </div>
+
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  <label className="flex items-center gap-2 text-[11px] text-bds-muted">
+                    Intensity
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={relightIntensity}
+                      onChange={(e) =>
+                        setRelightIntensity(parseFloat(e.target.value))
+                      }
+                      disabled={relightBusy}
+                      className="accent-bds-accent"
+                    />
+                    <span className="tabular-nums text-bds-fg">
+                      {Math.round(relightIntensity * 100)}%
+                    </span>
+                  </label>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={generateRelight}
+                    disabled={relightBusy || !relightVideo || !relightHdri}
+                  >
+                    {relightBusy ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-4 w-4" />
+                    )}
+                    Relight clip
+                  </Button>
+                  {!engine?.reachable && (
+                    <span className="text-[10px] text-bds-muted">
+                      Set the AI Engine URL in Settings to relight clips
+                    </span>
+                  )}
+                </div>
+
+                {relightProgress && (
+                  <div className="mt-2">
+                    <div className="mb-1 flex items-center justify-between text-[10px] text-bds-muted">
+                      <span className="truncate">{relightProgress.message}</span>
+                      <span>
+                        {Math.round((relightProgress.progress ?? 0) * 100)}%
+                      </span>
+                    </div>
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-bds-surface2">
+                      <div
+                        className="h-full rounded-full bg-bds-accent transition-all"
+                        style={{
+                          width: `${Math.round(
+                            (relightProgress.progress ?? 0) * 100
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* ACE-Step — text → original music track */}
+              <div className="border-b border-bds-border bg-bds-surface/40 px-4 py-3">
+                <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+                  <Badge variant="accent" className="gap-1">
+                    <Disc3 className="h-3 w-3" />
+                    AI Music (ACE-Step)
+                  </Badge>
+                  {engine?.reachable ? (
+                    <Badge variant="info" className="text-[9px]">
+                      engine online · {engine.models.length} models
+                    </Badge>
+                  ) : (
+                    <Badge variant="default" className="text-[9px]">
+                      engine offline
+                    </Badge>
+                  )}
+                  <span className="text-bds-muted">
+                    Generate an original track from a text description (and
+                    optional lyrics) with your installed ACE-Step model
+                  </span>
+                </div>
+
+                <input
+                  type="text"
+                  value={musicPrompt}
+                  onChange={(e) => setMusicPrompt(e.target.value)}
+                  disabled={musicBusy}
+                  placeholder="Describe the music — e.g. dark trap beat, 140 BPM, melancholic piano, heavy 808s"
+                  className="w-full rounded-md border border-bds-border bg-bds-surface2/40 px-2.5 py-2 text-[11px] text-bds-fg outline-none placeholder:text-bds-muted focus:border-bds-accent"
+                />
+                <textarea
+                  value={musicLyrics}
+                  onChange={(e) => setMusicLyrics(e.target.value)}
+                  disabled={musicBusy}
+                  rows={2}
+                  placeholder="Lyrics (optional) — leave empty for an instrumental"
+                  className="mt-2 w-full resize-y rounded-md border border-bds-border bg-bds-surface2/40 px-2.5 py-2 text-[11px] text-bds-fg outline-none placeholder:text-bds-muted focus:border-bds-accent"
+                />
+
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <label className="flex items-center gap-1.5 text-[11px] text-bds-muted">
+                    Length
+                    <select
+                      value={musicSeconds}
+                      onChange={(e) => setMusicSeconds(Number(e.target.value))}
+                      disabled={musicBusy}
+                      className="rounded-md border border-bds-border bg-bds-surface2/40 px-2 py-1.5 text-[11px] text-bds-fg outline-none focus:border-bds-accent"
+                    >
+                      <option value={15}>15s</option>
+                      <option value={30}>30s</option>
+                      <option value={60}>60s</option>
+                      <option value={120}>120s</option>
+                      <option value={180}>180s</option>
+                    </select>
+                  </label>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={generateMusic}
+                    disabled={musicBusy || !musicPrompt.trim()}
+                  >
+                    {musicBusy ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Disc3 className="h-4 w-4" />
+                    )}
+                    Generate music
+                  </Button>
+                  {!engine?.configured && (
+                    <span className="text-[10px] text-bds-muted">
+                      Set the AI Engine URL in Settings to enable music.
+                    </span>
+                  )}
+                </div>
+
+                {musicPath && (
+                  <audio
+                    controls
+                    src={convertFileSrc(musicPath)}
+                    className="mt-2 h-9 w-full"
+                  />
+                )}
+              </div>
+
+              {/* FLUX.2 Klein — text → image + image editing (NVIDIA fallback) */}
+              <div className="border-b border-bds-border bg-bds-surface/40 px-4 py-3">
+                <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+                  <Badge variant="accent" className="gap-1">
+                    <ImagePlus className="h-3 w-3" />
+                    AI Image Studio
+                  </Badge>
+                  {engine?.reachable ? (
+                    <Badge variant="info" className="text-[9px]">
+                      engine online
+                    </Badge>
+                  ) : (
+                    <Badge variant="default" className="text-[9px]">
+                      NVIDIA FLUX.2 Klein fallback
+                    </Badge>
+                  )}
+                  <span className="text-bds-muted">
+                    Generate a new image from text or edit an existing one. Uses
+                    your installed engine, or NVIDIA FLUX.2 Klein 4B in the cloud
+                    when the engine (H200) is off.
+                  </span>
+                </div>
+
+                <textarea
+                  value={aiImgPrompt}
+                  onChange={(e) => setAiImgPrompt(e.target.value)}
+                  disabled={aiImgBusy}
+                  rows={2}
+                  placeholder="Describe the image (for editing: describe the change) — e.g. cinematic neon portrait, rain, shallow depth of field"
+                  className="w-full resize-y rounded-md border border-bds-border bg-bds-surface2/40 px-2.5 py-2 text-[11px] text-bds-fg outline-none placeholder:text-bds-muted focus:border-bds-accent"
+                />
+
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={generateAiImage}
+                    disabled={aiImgBusy || !aiImgPrompt.trim()}
+                  >
+                    {aiImgBusy ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <ImagePlus className="h-4 w-4" />
+                    )}
+                    Generate image
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={pickAiEditSrc}
+                    disabled={aiImgBusy}
+                  >
+                    <Search className="h-4 w-4" />
+                    {aiEditSrc ? "Change source" : "Pick image to edit"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={editAiImage}
+                    disabled={aiImgBusy || (!aiEditSrc && !aiImgPath) || !aiImgPrompt.trim()}
+                  >
+                    <Wand2 className="h-4 w-4" />
+                    Edit image
+                  </Button>
+                </div>
+
+                {aiEditSrc && (
+                  <p className="mt-1.5 truncate text-[10px] text-bds-muted">
+                    Editing source: {aiEditSrc.split("/").pop()}
+                  </p>
+                )}
+
+                {aiImgPath && (
+                  <img
+                    src={convertFileSrc(aiImgPath)}
+                    alt="AI generated"
+                    className="mt-2 max-h-72 w-full rounded-md border border-bds-border object-contain"
+                  />
+                )}
+              </div>
 
               {media.length === 0 ? (
                 <div className="grid flex-1 place-items-center text-center text-bds-muted">
@@ -1740,6 +2396,7 @@ function BrollStudio({
   animate,
   busy,
   progress,
+  engine,
   onCount,
   onAnimate,
   onGenerate,
@@ -1755,6 +2412,7 @@ function BrollStudio({
   animate: boolean;
   busy: boolean;
   progress: BrollProgress | null;
+  engine: EngineStatus | null;
   onCount: (n: number) => void;
   onAnimate: (v: boolean) => void;
   onGenerate: () => void;
@@ -1791,9 +2449,16 @@ function BrollStudio({
             {ready}/{broll.length} ready
           </Badge>
         )}
+        {engine?.reachable && (
+          <Badge variant="info" className="gap-1 text-[9px]">
+            <Boxes className="h-3 w-3" />
+            installed models
+          </Badge>
+        )}
         <span className="text-bds-muted">
-          Style-matched shots generated with NVIDIA models, inserted where the
-          cut needs a cutaway
+          {engine?.reachable
+            ? "Style-matched shots from your installed FLUX/Qwen image models, animated with LTX/Wan when a video model is set"
+            : "Style-matched shots generated with NVIDIA models, inserted where the cut needs a cutaway"}
         </span>
       </div>
 
