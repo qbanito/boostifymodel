@@ -83,6 +83,97 @@ pub fn resolve_key(settings: &AppSettings) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Hugging Face Inference Providers — REAL image → video (Wan 2.2 on fal-ai)
+// ---------------------------------------------------------------------------
+
+/// HF Inference Providers router endpoint for Wan 2.2 image-to-video (fal-ai).
+/// Returns `{"video":{"url":"https://…mp4"}}` synchronously (HTTP 200).
+const HF_I2V_URL: &str =
+    "https://router.huggingface.co/fal-ai/fal-ai/wan/v2.2-a14b/image-to-video";
+
+/// Resolve the Hugging Face token: explicit settings value wins, else env vars.
+pub fn resolve_hf_token(settings: &AppSettings) -> String {
+    let k = settings.hf_token.trim();
+    if !k.is_empty() {
+        return k.to_string();
+    }
+    for v in ["HF_TOKEN", "HUGGINGFACE_TOKEN", "HUGGING_FACE_HUB_TOKEN"] {
+        if let Ok(val) = std::env::var(v) {
+            let val = val.trim().to_string();
+            if !val.is_empty() {
+                return val;
+            }
+        }
+    }
+    String::new()
+}
+
+/// Animate a still into REAL AI motion via Hugging Face Inference Providers
+/// (Wan 2.2 image-to-video on fal-ai). Returns the downloaded MP4 bytes, or
+/// `None` when the token is missing / credits are exhausted / the call fails —
+/// in which case the caller falls back to the local Ken Burns animation.
+pub fn image_to_video_hf(token: &str, png: &[u8], prompt: &str) -> Option<Vec<u8>> {
+    let token = token.trim();
+    if token.is_empty() {
+        return None;
+    }
+    let data_url = format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(png)
+    );
+    let motion = if prompt.trim().is_empty() {
+        "gentle cinematic camera motion, subtle parallax, living scene"
+    } else {
+        prompt.trim()
+    };
+    let body = json!({ "image_url": data_url, "prompt": motion });
+
+    let resp = ureq::post(HF_I2V_URL)
+        .set("Authorization", &format!("Bearer {token}"))
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json")
+        .timeout(Duration::from_secs(300))
+        .send_json(body);
+
+    let v: Value = match resp {
+        Ok(r) => r.into_json().ok()?,
+        Err(ureq::Error::Status(code, r)) => {
+            let detail = r
+                .into_string()
+                .unwrap_or_default()
+                .chars()
+                .take(400)
+                .collect::<String>();
+            eprintln!("[hf-i2v] HTTP {code}: {detail}");
+            return None;
+        }
+        Err(e) => {
+            eprintln!("[hf-i2v] request failed: {e}");
+            return None;
+        }
+    };
+
+    let url = v
+        .pointer("/video/url")
+        .and_then(|x| x.as_str())
+        .or_else(|| v.pointer("/url").and_then(|x| x.as_str()))?;
+
+    // Download the produced MP4.
+    use std::io::Read;
+    let dl = ureq::get(url).timeout(Duration::from_secs(180)).call().ok()?;
+    let mut buf = Vec::new();
+    dl.into_reader()
+        .take(200_000_000)
+        .read_to_end(&mut buf)
+        .ok()?;
+    if buf.is_empty() {
+        None
+    } else {
+        Some(buf)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Style capture
 // ---------------------------------------------------------------------------
 

@@ -27,6 +27,7 @@ const DEFAULTS: AppSettings = {
   imageModel: "flux-dev",
   videoModel: "",
   musicModel: "ace-step-xl-base",
+  hfToken: "",
 };
 
 export function SettingsPage({
@@ -169,6 +170,21 @@ export function SettingsPage({
                   onChange={(e) => set("nimApiKey", e.target.value)}
                   placeholder="nvapi-…"
                 />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-bds-muted">Hugging Face token (video real)</label>
+                <Input
+                  type="password"
+                  value={s.hfToken}
+                  onChange={(e) => set("hfToken", e.target.value)}
+                  placeholder="hf_…"
+                />
+                <p className="text-[11px] text-bds-muted">
+                  Activa <strong>video con movimiento real de IA</strong> (Wan 2.2
+                  image-to-video vía HF Inference Providers) en lugar del Ken Burns
+                  local. Vacío = animación Ken Burns. Usa el cupo gratuito mensual
+                  de HF; si se agota, las generaciones vuelven a Ken Burns.
+                </p>
               </div>
               <div className="space-y-1">
                 <label className="text-xs text-bds-muted">NIM vision model (free reasoner)</label>

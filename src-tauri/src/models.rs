@@ -155,6 +155,11 @@ pub struct AppSettings {
     /// Preferred installed music model (ace-step-xl-base | sft | turbo).
     #[serde(default = "default_music_model")]
     pub music_model: String,
+    /// Hugging Face token (Inference Providers) — enables REAL AI image-to-video
+    /// (Wan 2.2 on fal-ai) for B-roll/shots instead of the local Ken Burns pan.
+    /// Empty = keep local Ken Burns animation.
+    #[serde(default)]
+    pub hf_token: String,
 }
 
 fn default_gpu_instance() -> String {
@@ -188,6 +193,7 @@ impl Default for AppSettings {
             image_model: default_image_model(),
             video_model: String::new(),
             music_model: default_music_model(),
+            hf_token: String::new(),
         }
     }
 }

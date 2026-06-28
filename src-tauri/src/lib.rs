@@ -650,6 +650,23 @@ fn render_clip(
             Err(e) => eprintln!("[engine] image-to-video failed, using Ken Burns: {e}"),
         }
     }
+
+    // Real AI motion via Hugging Face Inference Providers (Wan 2.2 i2v) when an
+    // HF token is configured — turns the generated still into true motion
+    // instead of the local Ken Burns pan. Falls back to Ken Burns on any error.
+    let hf = genai::resolve_hf_token(settings);
+    if !hf.is_empty() {
+        if let Some(mp4) = genai::image_to_video_hf(&hf, png, prompt) {
+            if let Some(parent) = out.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if std::fs::write(out, &mp4).is_ok() && out.exists() {
+                return true;
+            }
+        }
+        eprintln!("[hf-i2v] failed, using Ken Burns");
+    }
+
     genai::animate_still_local(img_path, out, seconds, fps, variant)
 }
 

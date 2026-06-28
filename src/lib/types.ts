@@ -122,6 +122,7 @@ export interface AppSettings {
   imageModel: string;
   videoModel: string;
   musicModel: string;
+  hfToken: string;
 }
 
 /** One model installed/available on the Boostify AI Engine. */
