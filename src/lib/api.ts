@@ -46,6 +46,14 @@ export const api = {
     return invoke("list_videos", { limit, offset });
   },
 
+  deleteVideos(ids: number[]): Promise<number> {
+    return invoke("delete_videos", { ids });
+  },
+
+  deleteVideosByStatus(status: string): Promise<number> {
+    return invoke("delete_videos_by_status", { status });
+  },
+
   // ---- Pipeline ----
   processVideo(videoId: number): Promise<void> {
     return invoke("process_video", { videoId });

@@ -222,6 +222,21 @@ fn list_videos(
     db::list_videos(&conn, limit, offset).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn delete_videos(ids: Vec<i64>, state: State<'_, Arc<AppState>>) -> Result<usize, String> {
+    let mut conn = state.conn.lock().unwrap();
+    db::delete_videos(&mut conn, &ids).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_videos_by_status(
+    status: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<usize, String> {
+    let conn = state.conn.lock().unwrap();
+    db::delete_videos_by_status(&conn, &status).map_err(|e| e.to_string())
+}
+
 // ---------------------------------------------------------------------------
 // Pipeline
 // ---------------------------------------------------------------------------
@@ -1247,6 +1262,8 @@ pub fn run() {
             scan_folder,
             cancel_scan,
             list_videos,
+            delete_videos,
+            delete_videos_by_status,
             process_video,
             process_all_pending,
             list_clips,

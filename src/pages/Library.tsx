@@ -14,6 +14,7 @@ import {
   RefreshCw,
   HardDriveDownload,
   FileVideo,
+  Trash2,
 } from "lucide-react";
 
 const STATUS_VARIANT: Record<string, "default" | "good" | "warn" | "bad" | "info" | "accent"> = {
@@ -90,6 +91,35 @@ export function Library({ gpu, deps }: SharedProps) {
     }
   };
 
+  const errorCount = videos.filter((v) => v.status === "error").length;
+
+  const handleDeleteOne = async (v: VideoFile) => {
+    try {
+      await api.deleteVideos([v.id]);
+      setVideos((prev) => prev.filter((x) => x.id !== v.id));
+      push("success", `Removed ${v.filename} from library`);
+    } catch (e) {
+      push("error", `Could not remove: ${String(e)}`);
+    }
+  };
+
+  const handleDeleteErrored = async () => {
+    if (errorCount === 0) return;
+    const ok = window.confirm(
+      `Remove ${errorCount} errored ${
+        errorCount === 1 ? "file" : "files"
+      } from the library? This only clears the index entries \u2014 your original files on disk are not deleted.`
+    );
+    if (!ok) return;
+    try {
+      const removed = await api.deleteVideosByStatus("error");
+      setVideos((prev) => prev.filter((v) => v.status !== "error"));
+      push("success", `Removed ${removed} errored ${removed === 1 ? "file" : "files"}`);
+    } catch (e) {
+      push("error", `Could not remove errored files: ${String(e)}`);
+    }
+  };
+
   return (
     <>
       <TopBar
@@ -145,11 +175,28 @@ export function Library({ gpu, deps }: SharedProps) {
             <div className="mb-3 flex items-center justify-between">
               <p className="text-sm text-bds-muted">
                 {formatNumber(videos.length)} videos indexed
+                {errorCount > 0 && (
+                  <span className="text-bds-bad">
+                    {" "}· {formatNumber(errorCount)} with errors
+                  </span>
+                )}
               </p>
-              <Button variant="outline" size="sm" onClick={handleProcessAll}>
-                <Play className="h-4 w-4" />
-                Process all pending
-              </Button>
+              <div className="flex items-center gap-2">
+                {errorCount > 0 && (
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={handleDeleteErrored}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Remove errored ({formatNumber(errorCount)})
+                  </Button>
+                )}
+                <Button variant="outline" size="sm" onClick={handleProcessAll}>
+                  <Play className="h-4 w-4" />
+                  Process all pending
+                </Button>
+              </div>
             </div>
             <div className="card overflow-hidden">
               <table className="w-full text-sm">
@@ -161,6 +208,7 @@ export function Library({ gpu, deps }: SharedProps) {
                     <th className="px-4 py-2.5 font-medium">Codec</th>
                     <th className="px-4 py-2.5 font-medium">Size</th>
                     <th className="px-4 py-2.5 font-medium">Status</th>
+                    <th className="px-4 py-2.5 font-medium text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -194,6 +242,18 @@ export function Library({ gpu, deps }: SharedProps) {
                         <Badge variant={STATUS_VARIANT[v.status] ?? "default"}>
                           {v.status}
                         </Badge>
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Remove from library"
+                          aria-label={`Remove ${v.filename} from library`}
+                          onClick={() => handleDeleteOne(v)}
+                          className="text-bds-muted hover:text-bds-bad"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </td>
                     </tr>
                   ))}

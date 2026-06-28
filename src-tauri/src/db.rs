@@ -256,6 +256,33 @@ pub fn set_video_status(conn: &Connection, id: i64, status: &str, processed: boo
     Ok(())
 }
 
+/// Remove videos from the library index by id (their clips are removed too via
+/// `ON DELETE CASCADE`). This only deletes the index rows, never the original
+/// source files on disk. Returns the number of rows removed.
+pub fn delete_videos(conn: &mut Connection, ids: &[i64]) -> Result<usize> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let tx = conn.transaction()?;
+    let mut removed = 0usize;
+    {
+        let mut stmt = tx.prepare("DELETE FROM videos WHERE id = ?1")?;
+        for id in ids {
+            removed += stmt.execute(params![id])?;
+        }
+    }
+    tx.commit()?;
+    Ok(removed)
+}
+
+/// Remove every video with the given status from the library index (e.g. all
+/// "error" entries). Source files on disk are left untouched.
+pub fn delete_videos_by_status(conn: &Connection, status: &str) -> Result<usize> {
+    let removed = conn.execute("DELETE FROM videos WHERE status = ?1", params![status])?;
+    Ok(removed)
+}
+
+
 fn row_to_video(r: &rusqlite::Row) -> rusqlite::Result<VideoFile> {
     Ok(VideoFile {
         id: r.get("id")?,
