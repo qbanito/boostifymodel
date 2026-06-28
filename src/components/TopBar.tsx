@@ -19,20 +19,20 @@ export function TopBar({
   children?: React.ReactNode;
 }) {
   return (
-    <header className="flex h-16 shrink-0 items-center justify-between border-b border-bds-border px-6">
+    <header className="flex h-12 shrink-0 items-center justify-between border-b border-bds-border px-4">
       <div className="min-w-0">
         <div className="flex items-center gap-2">
-          <h1 className="truncate text-lg font-semibold tracking-tight">{title}</h1>
+          <h1 className="truncate text-sm font-semibold tracking-tight">{title}</h1>
           {busy && (
-            <Activity className="h-4 w-4 animate-pulse text-bds-accent" />
+            <Activity className="h-3.5 w-3.5 animate-pulse text-bds-accent" />
           )}
         </div>
         {subtitle && (
-          <p className="truncate text-xs text-bds-muted">{subtitle}</p>
+          <p className="truncate text-[11px] leading-tight text-bds-muted">{subtitle}</p>
         )}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5">
         {children}
         {deps && !(deps.ffmpeg && deps.ffprobe) && (
           <Badge variant="warn" className="gap-1">

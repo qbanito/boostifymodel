@@ -227,9 +227,40 @@ fn shot_prompt(style: &StyleReference, section: &str, idea: &str, performer: boo
     )
 }
 
+/// Force a single rendered clip to *exactly* `dur` seconds and a uniform stream
+/// (size / fps / SAR / pixel format) so cuts land precisely on the planned
+/// beat grid regardless of which backend produced the clip. The HF i2v models
+/// (Wan / LTX) ignore the requested length and always return ~5 s; without this
+/// step the edit drifts off the beat and the video runs far past the song.
+///
+/// If the source clip is shorter than `dur` the last frame is held (tpad clone)
+/// so the segment still fills its musical slot; if it is longer it is trimmed.
+fn normalize_segment(src: &Path, dst: &Path, dur: f64, fps: i64) -> bool {
+    let dur = if dur.is_finite() && dur > 0.2 { dur } else { 3.0 };
+    // scale+crop to a uniform 1920x1080 canvas, lock the fps, then pad with the
+    // cloned last frame (enough to always reach `dur`) and finally trim to `dur`.
+    let vf = format!(
+        "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,\
+         fps={fps},tpad=stop_mode=clone:stop_duration={dur:.3},setsar=1,format=yuv420p"
+    );
+    let st = Command::new(ffmpeg_bin())
+        .args(["-hide_banner", "-loglevel", "error", "-y", "-i"])
+        .arg(src)
+        .args(["-vf", &vf, "-t", &format!("{dur:.3}")])
+        .args([
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-pix_fmt", "yuv420p",
+            "-r", &fps.to_string(), "-an",
+        ])
+        .arg(dst)
+        .status();
+    matches!(st, Ok(s) if s.success()) && dst.exists()
+}
+
 /// Concatenate the rendered shot clips (in order) and mux the master audio into
-/// a single MP4. Returns true on success.
-pub fn assemble(clips: &[PathBuf], audio: Option<&Path>, out: &Path, fps: f64) -> bool {
+/// a single MP4. Each clip is first conformed to its planned beat-aligned
+/// duration (`durations[i]`) so the final cut stays locked to the music.
+/// Returns true on success.
+pub fn assemble(clips: &[PathBuf], durations: &[f64], audio: Option<&Path>, out: &Path, fps: f64) -> bool {
     if clips.is_empty() {
         return false;
     }
@@ -240,11 +271,25 @@ pub fn assemble(clips: &[PathBuf], audio: Option<&Path>, out: &Path, fps: f64) -
     let _ = std::fs::create_dir_all(&parent);
 
     let fps = if fps.is_finite() && fps > 1.0 { fps } else { 24.0 };
+    let fps_i = fps as i64;
+
+    // 0) Normalize every clip to its exact planned duration + a uniform stream.
+    let mut segments: Vec<PathBuf> = Vec::with_capacity(clips.len());
+    for (i, clip) in clips.iter().enumerate() {
+        let dur = durations.get(i).copied().unwrap_or(3.0);
+        let seg = parent.join(format!("seg_{:04}_{}.mp4", i, nanos()));
+        if normalize_segment(clip, &seg, dur, fps_i) {
+            segments.push(seg);
+        } else {
+            // Fall back to the raw clip so a single bad normalize can't drop the shot.
+            segments.push(clip.clone());
+        }
+    }
 
     // 1) Build the concat-demuxer list file (absolute paths, single-quoted).
     let list_path = parent.join(format!("concat_{}.txt", nanos()));
     let mut list = String::new();
-    for clip in clips {
+    for clip in &segments {
         let p = clip.to_string_lossy().replace('\'', "'\\''");
         list.push_str(&format!("file '{}'\n", p));
     }
@@ -267,7 +312,6 @@ pub fn assemble(clips: &[PathBuf], audio: Option<&Path>, out: &Path, fps: f64) -
     if !matches!(concat_ok, Ok(s) if s.success()) || !silent.exists() {
         return false;
     }
-
     // 3) Mux the master audio (trim to the shorter stream).
     let ok = match audio {
         Some(a) if a.exists() => {
@@ -291,5 +335,53 @@ pub fn assemble(clips: &[PathBuf], audio: Option<&Path>, out: &Path, fps: f64) -
     };
 
     let _ = std::fs::remove_file(&silent);
+    // Clean up the per-shot normalized segments (skip any raw-clip fallbacks).
+    for seg in &segments {
+        if seg.file_name().map(|n| n.to_string_lossy().starts_with("seg_")).unwrap_or(false) {
+            let _ = std::fs::remove_file(seg);
+        }
+    }
     ok && out.exists()
+}
+
+/// Cut one source clip for the automatic edit: seek to `src_in`, read `src_len`
+/// seconds, and apply the EDL `speed_pct` (slow-motion < 100). Writes an H.264
+/// MP4 with no audio (the master song is muxed later by `assemble`). The output
+/// duration after the `setpts` retime is `src_len * 100 / speed_pct`, which is
+/// exactly the timeline slot length, so `assemble` then locks it to the beat.
+pub fn cut_source_segment(
+    src: &Path,
+    dst: &Path,
+    src_in: f64,
+    src_len: f64,
+    speed_pct: f64,
+    fps: f64,
+) -> bool {
+    let speed = if speed_pct.is_finite() && speed_pct > 1.0 { speed_pct } else { 100.0 };
+    let k = 100.0 / speed; // setpts multiplier: slow-mo (speed<100) stretches time
+    let src_in = if src_in.is_finite() && src_in > 0.0 { src_in } else { 0.0 };
+    let src_len = if src_len.is_finite() && src_len > 0.1 { src_len } else { 3.0 };
+    let fps = if fps.is_finite() && fps > 1.0 { fps } else { 24.0 };
+    let fps_i = fps as i64;
+
+    // Retime first, then conform to a uniform 1920x1080 / fps / SAR stream.
+    let vf = format!(
+        "setpts={k:.4}*PTS,scale=1920:1080:force_original_aspect_ratio=increase,\
+         crop=1920:1080,fps={fps_i},setsar=1,format=yuv420p"
+    );
+
+    let st = Command::new(ffmpeg_bin())
+        .args(["-hide_banner", "-loglevel", "error", "-y", "-ss"])
+        .arg(format!("{src_in:.3}"))
+        .args(["-t", &format!("{src_len:.3}")])
+        .arg("-i")
+        .arg(src)
+        .args(["-vf", &vf])
+        .args([
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-pix_fmt", "yuv420p",
+            "-r", &fps_i.to_string(), "-an",
+        ])
+        .arg(dst)
+        .status();
+    matches!(st, Ok(s) if s.success()) && dst.exists()
 }

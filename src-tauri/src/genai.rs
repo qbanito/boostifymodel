@@ -196,6 +196,48 @@ fn hf_i2v_call(url: &str, token: &str, body: &Value) -> Option<Vec<u8>> {
 // Style capture
 // ---------------------------------------------------------------------------
 
+/// Merge the captured visual descriptor with the concepts read from real
+/// reference frames (VLM captions) and the song's lyrical theme into a single
+/// richer "concept" string. Used to ground B-roll generation so new shots match
+/// both the look of the real footage AND the meaning of the song.
+pub fn concept_descriptor(base: &str, captions: &[String], lyrics: Option<&str>) -> String {
+    let mut out = base.trim().trim_end_matches('.').to_string();
+
+    let mut refs: Vec<String> = captions
+        .iter()
+        .map(|c| c.trim().trim_end_matches('.').to_string())
+        .filter(|c| !c.is_empty())
+        .collect();
+    refs.dedup();
+    if !refs.is_empty() {
+        out.push_str(". Reference scenes from the real footage: ");
+        out.push_str(&refs.into_iter().take(2).collect::<Vec<_>>().join("; "));
+    }
+
+    if let Some(theme) = lyrics
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(lyric_theme)
+        .filter(|t| !t.is_empty())
+    {
+        out.push_str(". Lyrical theme to evoke: ");
+        out.push_str(&theme);
+    }
+
+    format!("{}.", out.trim_end_matches('.'))
+}
+
+/// Condense lyrics into a short theme hint (first couple of non-empty lines).
+fn lyric_theme(lyrics: &str) -> String {
+    lyrics
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .take(2)
+        .collect::<Vec<_>>()
+        .join(" / ")
+}
+
 /// Build a visual style reference from the session's existing footage:
 /// dominant color palette + a natural-language descriptor derived from the
 /// per-clip scene analysis, plus a handful of representative keyframes.
@@ -345,9 +387,19 @@ pub struct BrollPlan {
 }
 
 /// Plan `count` coherent B-roll shots, biased toward the calm sections of the
-/// song (intro/low/bridge/outro) where cutaways read best, and toward ideas
-/// that match the captured style.
-pub fn plan_broll(style: &StyleReference, analysis: &MasterAnalysis, count: usize) -> Vec<BrollPlan> {
+/// song (intro/low/bridge/outro) where cutaways read best.
+///
+/// `concepts` are the VLM descriptions of the project's REAL reference frames
+/// (extracted from the uploaded footage). When present they drive the SUBJECT
+/// of every shot, so generated B-roll stays coherent with the actual video and
+/// song — instead of generic stock clichés. Curated ideas are used only as a
+/// fallback when there's no footage concept available (e.g. no VLM key).
+pub fn plan_broll(
+    style: &StyleReference,
+    analysis: &MasterAnalysis,
+    count: usize,
+    concepts: &[String],
+) -> Vec<BrollPlan> {
     // Section pool: calm sections first, then everything else.
     let mut sections: Vec<String> = analysis
         .sections
@@ -362,16 +414,54 @@ pub fn plan_broll(style: &StyleReference, analysis: &MasterAnalysis, count: usiz
         sections.push("bridge".into());
     }
 
-    let ideas = broll_ideas(style);
+    let ideas = broll_ideas_grounded(style, concepts, count.max(1));
     let mut plans = Vec::with_capacity(count);
     for i in 0..count {
         let section = sections[i % sections.len()].clone();
-        let idea = ideas[i % ideas.len()].to_string();
+        let idea = ideas[i % ideas.len()].clone();
         let seed = (1000 + (i as i64) * 7919) % 2_147_483_647;
         let prompt = broll_prompt(style, &section, &idea);
         plans.push(BrollPlan { section, idea, prompt, seed });
     }
     plans
+}
+
+/// Build the B-roll shot ideas. Grounds the SUBJECT of each shot in the real
+/// footage concepts (VLM captions) so the set stays coherent with the project;
+/// cycles a few cinematic "treatments" so repeated concepts don't render the
+/// exact same frame. Falls back to the curated stock ideas only when there are
+/// no footage concepts (no analyzed takes / no VLM key).
+fn broll_ideas_grounded(style: &StyleReference, concepts: &[String], count: usize) -> Vec<String> {
+    let clean: Vec<String> = concepts
+        .iter()
+        .map(|c| c.trim().trim_end_matches('.').trim().to_string())
+        .filter(|c| c.len() > 8)
+        .collect();
+
+    if clean.is_empty() {
+        // No real-footage context → curated cinematic clichés (best-effort).
+        return broll_ideas(style).into_iter().map(String::from).collect();
+    }
+
+    // Cinematic cutaway treatments derived FROM the real scene, not invented.
+    let treatments = [
+        "atmospheric cutaway from the same world",
+        "detail / insert shot from the scene",
+        "wide establishing shot of the same location",
+        "moody texture shot matching the scene",
+    ];
+    let mut ideas: Vec<String> = Vec::with_capacity(count);
+    let mut i = 0usize;
+    while ideas.len() < count.max(clean.len()) {
+        let concept = &clean[i % clean.len()];
+        let treatment = treatments[i % treatments.len()];
+        ideas.push(format!("{treatment}: {concept}"));
+        i += 1;
+        if i > count + clean.len() + 8 {
+            break; // safety
+        }
+    }
+    ideas
 }
 
 /// Curated, style-aware cinematic B-roll ideas. Reorders so ideas matching the
@@ -729,30 +819,69 @@ fn decode_b64(s: &str) -> Option<Vec<u8>> {
 ///
 /// `variant` cycles the motion (zoom-in, zoom-out, pan) for visual variety.
 /// Returns true on success (an H.264 MP4 written to `out`).
-pub fn animate_still_local(img: &Path, out: &Path, seconds: f64, fps: f64, variant: u8) -> bool {
+pub fn animate_still_local(
+    img: &Path,
+    out: &Path,
+    seconds: f64,
+    fps: f64,
+    variant: u8,
+    bpm: f64,
+    beat_phase: f64,
+) -> bool {
     if let Some(parent) = out.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     let fps = if fps.is_finite() && fps > 1.0 { fps } else { 24.0 };
     let secs = seconds.clamp(2.0, 8.0);
-    let frames = (secs * fps).round().max(2.0) as i64;
+    let fps_i = fps as i64;
+    let frames = ((secs * fps).round() as i64).max(2);
+    let dur = (frames - 1).max(1); // last output-frame index (avoids div-by-zero)
 
-    // zoompan works on an upscaled frame for smooth, jitter-free motion.
-    // The moves are deliberately pronounced so every clip reads clearly as
-    // motion (cinematic drift) rather than a static photo.
-    let motion = match variant % 4 {
-        // Zoom-in while drifting up-left → down-right (diagonal push).
-        0 => "zoompan=z='min(zoom+0.0022,1.30)':x='(iw-iw/zoom)*on/DUR':y='(ih-ih/zoom)*on/DUR'".replace("DUR", &frames.to_string()),
-        // Zoom-out, centered (reveal).
-        1 => "zoompan=z='if(eq(on,0),1.30,max(zoom-0.0022,1.0))':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'".to_string(),
-        // Zoom-in drifting left→right.
-        2 => "zoompan=z='min(zoom+0.0020,1.26)':x='(iw-iw/zoom)*on/DUR':y='ih/2-(ih/zoom/2)'".replace("DUR", &frames.to_string()),
-        // Zoom-in drifting bottom→top.
-        _ => "zoompan=z='min(zoom+0.0020,1.26)':x='iw/2-(iw/zoom/2)':y='(ih-ih/zoom)*(1-on/DUR)'".replace("DUR", &frames.to_string()),
+    // Beat-synced "punch": a small absolute-zoom accent that lands EXACTLY on
+    // every beat so the still visibly breathes in time with the music. `on` is
+    // the output frame index; `bp` = frames per beat; `f0` = frames to the
+    // first beat inside this clip's window. The `+100*bp` keeps mod() positive.
+    let pulse = if bpm > 20.0 && bpm < 300.0 {
+        let bp = (fps * 60.0 / bpm).max(1.0);
+        let f0 = (beat_phase.max(0.0) * fps) % bp;
+        format!("(1+0.055*exp(-7*mod(on-{f0:.2}+100*{bp:.3},{bp:.3})/{bp:.3}))")
+    } else {
+        "1".to_string()
     };
+
+    // Absolute-zoom base move per variant (so it composes cleanly with `pulse`).
+    // zoompan works on an upscaled frame for smooth, jitter-free motion.
+    let (base_z, x, y) = match variant % 4 {
+        // Diagonal push-in (up-left → down-right).
+        0 => (
+            format!("(1.04+0.18*on/{dur})"),
+            format!("(iw-iw/zoom)*on/{dur}"),
+            format!("(ih-ih/zoom)*on/{dur}"),
+        ),
+        // Reveal (zoom-out), centered.
+        1 => (
+            format!("(1.26-0.16*on/{dur})"),
+            "iw/2-(iw/zoom/2)".to_string(),
+            "ih/2-(ih/zoom/2)".to_string(),
+        ),
+        // Push-in drifting left → right.
+        2 => (
+            format!("(1.04+0.16*on/{dur})"),
+            format!("(iw-iw/zoom)*on/{dur}"),
+            "ih/2-(ih/zoom/2)".to_string(),
+        ),
+        // Push-in drifting bottom → top.
+        _ => (
+            format!("(1.04+0.16*on/{dur})"),
+            "iw/2-(iw/zoom/2)".to_string(),
+            format!("(ih-ih/zoom)*(1-on/{dur})"),
+        ),
+    };
+    // Clamp ≥1.0 so the beat accent never reveals black borders.
+    let z = format!("max({base_z}*{pulse},1.001)");
+    let motion = format!("zoompan=z='{z}':x='{x}':y='{y}'");
     let vf = format!(
-        "scale=-2:2160,{motion}:d={frames}:s=1920x1080:fps={fps},format=yuv420p",
-        fps = fps as i64
+        "scale=-2:2160,{motion}:d={frames}:s=1920x1080:fps={fps_i},format=yuv420p"
     );
 
     let st = Command::new(ffmpeg_bin())

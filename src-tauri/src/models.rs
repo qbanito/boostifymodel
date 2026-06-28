@@ -295,6 +295,9 @@ pub struct EditSession {
     pub sequence_fps: f64,
     /// 'draft' | 'classified' | 'edited' | 'exported'.
     pub status: String,
+    /// Song lyrics, used to ground concept analysis and B-roll generation.
+    #[serde(default)]
+    pub lyrics: Option<String>,
     pub created_at: String,
 }
 
@@ -443,6 +446,32 @@ pub struct StyleReference {
     pub artist: Option<String>,
 }
 
+/// A representative reference frame extracted from one take, with its quality
+/// verdict. Used to (a) warn about unusable footage (shaky/soft/dark takes) and
+/// (b) seed coherent, concept-aware B-roll from the artist's real footage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReferenceFrame {
+    pub media_id: i64,
+    /// Source role: 'performance' | 'story' | …
+    pub role: String,
+    pub filename: String,
+    /// Timestamp (seconds) of the chosen representative frame.
+    pub time: f64,
+    /// Path to the extracted JPEG screenshot, when extraction succeeded.
+    pub frame_path: Option<String>,
+    /// 'good' | 'shaky' | 'soft' | 'dark' | 'unknown'.
+    pub verdict: String,
+    /// Overall technical quality 0..1 (exposure + sharpness + stability).
+    pub score: f64,
+    /// False when the take is too shaky/soft to use as a reference.
+    pub usable: bool,
+    /// Human-readable problems detected (in Spanish, for the UI).
+    pub issues: Vec<String>,
+    /// VLM one-line concept description of the frame (grounded by lyrics).
+    pub caption: Option<String>,
+}
+
 /// A single AI-generated B-roll asset (image, optionally animated to video)
 /// that can be reviewed and inserted into the edit.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -464,4 +493,74 @@ pub struct BrollCandidate {
     pub note: Option<String>,
     pub created_at: String,
 }
+
+/// A Remotion effect preset the AI editor can propose / preview on a clip.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditEffect {
+    /// Stable id passed to the Remotion `EditEffect` composition.
+    pub id: String,
+    pub label: String,
+    /// 'transition' | 'motion' | 'texture' | 'text' | 'color' | 'time'.
+    pub category: String,
+    pub description: String,
+}
+
+/// High-level numbers describing the current timeline, shown in the UI and fed
+/// to the reasoning model so its suggestions are grounded in the real edit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineStats {
+    pub segment_count: i64,
+    pub total_seconds: f64,
+    pub avg_cut_seconds: f64,
+    pub bpm: f64,
+    /// Average cuts measured in beats (avg_cut_seconds / beat_seconds).
+    pub beats_per_cut: f64,
+    pub performance_pct: f64,
+    pub story_pct: f64,
+    pub broll_count: i64,
+    pub slowmo_count: i64,
+    /// Cuts whose start is far (>120ms) from the nearest detected beat.
+    pub off_beat_cuts: i64,
+}
+
+/// One concrete edit suggestion from the AI editor agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditSuggestion {
+    pub id: String,
+    pub title: String,
+    /// 'pacing' | 'reorder' | 'speed' | 'broll' | 'transition' | 'text' | 'color' | 'effect'.
+    pub kind: String,
+    /// Human target, e.g. "Drop @ 1:12" or "Cut 14".
+    pub target: String,
+    /// 'info' | 'suggest' | 'important'.
+    pub severity: String,
+    pub rationale: String,
+    /// Machine action this suggestion can apply to the timeline:
+    /// 'set_speed' | 'split_faster' | 'merge_slower' | 'mark_broll' | 'none'.
+    pub action: String,
+    /// `order_index` of the segment this touches, when applicable.
+    pub segment_index: Option<i64>,
+    /// Numeric parameter for the action (speed pct, target seconds…).
+    pub value: Option<f64>,
+    /// Remotion effect preset id to preview, when the suggestion is an effect.
+    pub effect_id: Option<String>,
+    /// Set true once applied to the timeline.
+    pub applied: bool,
+}
+
+/// The full report the AI editor returns for a session timeline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditAgentReport {
+    /// Which model produced it ("heuristic" when the LLM was unavailable).
+    pub model: String,
+    pub summary: String,
+    pub pacing: String,
+    pub stats: TimelineStats,
+    pub suggestions: Vec<EditSuggestion>,
+}
+
 

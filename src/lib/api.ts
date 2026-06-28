@@ -13,7 +13,11 @@ import type {
   EditSegment,
   EditProfile,
   EditFeedback,
+  EditAgentReport,
+  EditSuggestion,
+  EditEffect,
   StyleReference,
+  ReferenceFrame,
   BrollCandidate,
   BrollProgress,
   EngineStatus,
@@ -201,6 +205,10 @@ export const api = {
     return invoke("delete_edit_session", { sessionId });
   },
 
+  renameEditSession(sessionId: number, name: string): Promise<void> {
+    return invoke("rename_edit_session", { sessionId, name });
+  },
+
   listSessionMedia(sessionId: number): Promise<SessionMedia[]> {
     return invoke("list_session_media", { sessionId });
   },
@@ -237,6 +245,34 @@ export const api = {
     return invoke("export_session_edit", { sessionId });
   },
 
+  renderSessionEdit(sessionId: number): Promise<string> {
+    return invoke("render_session_edit", { sessionId });
+  },
+
+  // ---- AI editing director ----
+  runEditAgent(sessionId: number): Promise<EditAgentReport> {
+    return invoke("run_edit_agent", { sessionId });
+  },
+
+  applyEditSuggestion(
+    sessionId: number,
+    suggestion: EditSuggestion,
+  ): Promise<EditSegment[]> {
+    return invoke("apply_edit_suggestion", { sessionId, suggestion });
+  },
+
+  listEditEffects(): Promise<EditEffect[]> {
+    return invoke("list_edit_effects");
+  },
+
+  renderEffectPreview(
+    sessionId: number,
+    segmentIndex: number,
+    effectId: string,
+  ): Promise<string> {
+    return invoke("render_effect_preview", { sessionId, segmentIndex, effectId });
+  },
+
   getEditProfile(): Promise<EditProfile> {
     return invoke("get_edit_profile");
   },
@@ -252,6 +288,14 @@ export const api = {
   // ---- AI B-roll Studio ----
   captureStyleReference(sessionId: number): Promise<StyleReference> {
     return invoke("capture_style_reference", { sessionId });
+  },
+
+  setSessionLyrics(sessionId: number, lyrics: string): Promise<void> {
+    return invoke("set_session_lyrics", { sessionId, lyrics });
+  },
+
+  extractReferenceFrames(sessionId: number): Promise<ReferenceFrame[]> {
+    return invoke("extract_reference_frames", { sessionId });
   },
 
   generateBroll(
@@ -418,6 +462,10 @@ export const api = {
 
   onMusicVideoProgress(cb: (p: BrollProgress) => void): Promise<UnlistenFn> {
     return listen<BrollProgress>("mvgen:progress", (e) => cb(e.payload));
+  },
+
+  onAutoEditProgress(cb: (p: BrollProgress) => void): Promise<UnlistenFn> {
+    return listen<BrollProgress>("autoedit:progress", (e) => cb(e.payload));
   },
 
   onSyncProgress(cb: (p: BrollProgress) => void): Promise<UnlistenFn> {

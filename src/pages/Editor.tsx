@@ -4,6 +4,8 @@ import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/controls";
+import { CollapsibleSection } from "@/components/ui/collapsible";
+import { ContextMenu, type MenuEntry } from "@/components/ui/context-menu";
 import { useToast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
 import type {
@@ -11,7 +13,11 @@ import type {
   EditSegment,
   EditProfile,
   EditFeedback,
+  EditAgentReport,
+  EditSuggestion,
+  EditEffect,
   StyleReference,
+  ReferenceFrame,
   BrollCandidate,
   BrollProgress,
   EngineStatus,
@@ -50,6 +56,11 @@ import {
   Database,
   Boxes,
   Disc3,
+  ScanSearch,
+  AlertTriangle,
+  FileText,
+  BrainCircuit,
+  Check,
 } from "lucide-react";
 
 const SEQ_FPS_OPTIONS = [23.976, 24, 25, 29.97, 30, 50, 60];
@@ -85,12 +96,25 @@ export function Editor() {
   const [syncing, setSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState<BrollProgress | null>(null);
   const [datasetSending, setDatasetSending] = useState(false);
+  const [report, setReport] = useState<EditAgentReport | null>(null);
+  const [directing, setDirecting] = useState(false);
+  const [applyingId, setApplyingId] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{
+    x: number;
+    y: number;
+    items: MenuEntry[];
+  } | null>(null);
   const [datasetProgress, setDatasetProgress] = useState<BrollProgress | null>(
     null
   );
   const [mvGenerating, setMvGenerating] = useState(false);
   const [mvProgress, setMvProgress] = useState<BrollProgress | null>(null);
   const [mvPath, setMvPath] = useState<string | null>(null);
+  const [autoEditing, setAutoEditing] = useState(false);
+  const [autoEditProgress, setAutoEditProgress] = useState<BrollProgress | null>(
+    null
+  );
+  const [autoEditPath, setAutoEditPath] = useState<string | null>(null);
   const [profile, setProfile] = useState<EditProfile | null>(null);
   const [broll, setBroll] = useState<BrollCandidate[]>([]);
   const [style, setStyle] = useState<StyleReference | null>(null);
@@ -98,6 +122,10 @@ export function Editor() {
   const [animateBroll, setAnimateBroll] = useState(true);
   const [generatingBroll, setGeneratingBroll] = useState(false);
   const [brollProgress, setBrollProgress] = useState<BrollProgress | null>(null);
+  const [lyricsDraft, setLyricsDraft] = useState("");
+  const [savingLyrics, setSavingLyrics] = useState(false);
+  const [refFrames, setRefFrames] = useState<ReferenceFrame[]>([]);
+  const [analyzingTakes, setAnalyzingTakes] = useState(false);
   const [humoImage, setHumoImage] = useState<string | null>(null);
   const [humoAudio, setHumoAudio] = useState<string | null>(null);
   const [humoPrompt, setHumoPrompt] = useState("");
@@ -202,8 +230,10 @@ export function Editor() {
     if (activeId == null) {
       setBroll([]);
       setStyle(null);
+      setRefFrames([]);
       return;
     }
+    setRefFrames([]);
     api
       .listBroll(activeId)
       .then((b) => setBroll(b))
@@ -213,6 +243,11 @@ export function Editor() {
       .then((s) => setStyle(s))
       .catch(() => setStyle(null));
   }, [activeId]);
+
+  // Keep the lyrics editor in sync with the active session.
+  useEffect(() => {
+    setLyricsDraft(active?.lyrics ?? "");
+  }, [activeId, active?.lyrics]);
 
   // Subscribe to B-roll generation progress.
   useEffect(() => {
@@ -369,6 +404,28 @@ export function Editor() {
     };
   }, [activeId]);
 
+  // Subscribe to automatic-edit (real-footage render) progress.
+  useEffect(() => {
+    setAutoEditPath(null);
+    let mounted = true;
+    let un: (() => void) | null = null;
+    api
+      .onAutoEditProgress((p) => {
+        if (!mounted) return;
+        if (activeId != null && p.sessionId === activeId) {
+          setAutoEditProgress(p.done ? null : p);
+          if (p.done) setAutoEditing(false);
+        }
+      })
+      .then((u) => {
+        un = u;
+      });
+    return () => {
+      mounted = false;
+      un?.();
+    };
+  }, [activeId]);
+
   // Subscribe to ingest progress for the active session.
   useEffect(() => {
     let mounted = true;
@@ -412,6 +469,11 @@ export function Editor() {
   };
 
   const deleteSession = async (id: number) => {
+    const s = sessions.find((x) => x.id === id);
+    const ok = window.confirm(
+      `¿Eliminar la sesión "${s?.name ?? id}"? Esta acción no se puede deshacer.`
+    );
+    if (!ok) return;
     try {
       await api.deleteEditSession(id);
       setSessions((prev) => prev.filter((s) => s.id !== id));
@@ -479,6 +541,121 @@ export function Editor() {
     } finally {
       setBuilding(false);
     }
+  };
+
+  const runDirector = async () => {
+    if (!active) return;
+    if (edl.length === 0) {
+      push("error", "Build the timeline first");
+      return;
+    }
+    setDirecting(true);
+    try {
+      const r = await api.runEditAgent(active.id);
+      setReport(r);
+      push(
+        "success",
+        `${r.suggestions.length} ideas · ${r.model.split("/").pop()}`
+      );
+    } catch (e) {
+      push("error", String(e));
+    } finally {
+      setDirecting(false);
+    }
+  };
+
+  const applySuggestion = async (s: EditSuggestion) => {
+    if (!active) return;
+    setApplyingId(s.id);
+    try {
+      const segs = await api.applyEditSuggestion(active.id, s);
+      setEdl(segs);
+      setReport((prev) =>
+        prev
+          ? {
+              ...prev,
+              suggestions: prev.suggestions.map((x) =>
+                x.id === s.id ? { ...x, applied: true } : x
+              ),
+            }
+          : prev
+      );
+      push("success", `Applied: ${s.title}`);
+    } catch (e) {
+      push("error", String(e));
+    } finally {
+      setApplyingId(null);
+    }
+  };
+
+  // Apply a quick timeline edit on one segment (used by the right-click menu).
+  const segAction = async (
+    seg: EditSegment,
+    action: string,
+    value?: number,
+    label?: string
+  ) => {
+    if (!active) return;
+    try {
+      const segs = await api.applyEditSuggestion(active.id, {
+        id: `ctx-${action}-${seg.orderIndex}`,
+        title: label ?? action,
+        kind: "edit",
+        target: `#${seg.orderIndex + 1}`,
+        severity: "low",
+        rationale: "",
+        action,
+        segmentIndex: seg.orderIndex,
+        value: value ?? null,
+        effectId: null,
+        applied: false,
+      });
+      setEdl(segs);
+    } catch (e) {
+      push("error", String(e));
+    }
+  };
+
+  // Build the right-click menu for a timeline segment.
+  const openSegmentMenu = (e: React.MouseEvent, seg: EditSegment, src: string | null, name: string) => {
+    e.preventDefault();
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        { label: "Reproducir desde aquí", icon: <Play />, onClick: () => playerSeekRef.current?.(seg.timelineIn) },
+        ...(src ? [{ label: "Ver fotograma", icon: <Search />, onClick: () => setPreview({ src, title: name }) }] : []),
+        { separator: true },
+        { label: "Recortar inicio (−0.5s)", icon: <Scissors />, onClick: () => segAction(seg, "trim_in", 0.5, "Trim in") },
+        { label: "Recortar fin (−0.5s)", icon: <Scissors />, onClick: () => segAction(seg, "trim_out", 0.5, "Trim out") },
+        { separator: true },
+        { label: "Cámara lenta 50%", icon: <Gauge />, onClick: () => segAction(seg, "set_speed", 50, "Slow-mo 50%") },
+        { label: "Velocidad normal", icon: <Gauge />, onClick: () => segAction(seg, "set_speed", 100, "100%") },
+        { label: "Dividir corte", icon: <Scissors />, onClick: () => segAction(seg, "split_faster", undefined, "Split") },
+        { label: "Marcar como b-roll", icon: <Wand2 />, onClick: () => segAction(seg, "mark_broll", undefined, "Mark b-roll") },
+        { label: "Generar b-roll IA", icon: <Sparkles />, onClick: () => generateBroll() },
+        { separator: true },
+        { label: "Quitar del timeline", icon: <Trash2 />, danger: true, onClick: () => segAction(seg, "remove", undefined, "Remove") },
+      ],
+    });
+  };
+
+  // Right-click menu for a media library clip.
+  const openMediaMenu = (e: React.MouseEvent, m: SessionMedia) => {
+    e.preventDefault();
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        { label: "Marcar como Performance", icon: <Film />, disabled: m.kind !== "video", onClick: () => changeRole(m, "performance") },
+        { label: "Marcar como Story", icon: <Film />, disabled: m.kind !== "video", onClick: () => changeRole(m, "story") },
+        { label: "Sin clasificar", icon: <Film />, disabled: m.kind !== "video", onClick: () => changeRole(m, "unsorted") },
+        { separator: true },
+        { label: "Generar b-roll IA", icon: <Sparkles />, onClick: () => generateBroll() },
+        { separator: true },
+        { label: "Eliminar clip", icon: <Trash2 />, danger: true, onClick: () => removeMedia(m) },
+      ],
+    });
   };
 
   const syncPerformance = async () => {
@@ -562,6 +739,25 @@ export function Editor() {
     }
   };
 
+  const autoEditVideo = async () => {
+    if (!active) return;
+    if (edl.length === 0) {
+      push("error", "Build the edit first");
+      return;
+    }
+    setAutoEditing(true);
+    setAutoEditPath(null);
+    try {
+      const path = await api.renderSessionEdit(active.id);
+      setAutoEditPath(path);
+      push("success", "Auto-edit rendered — playing below.");
+    } catch (e) {
+      setAutoEditing(false);
+      setAutoEditProgress(null);
+      push("error", String(e));
+    }
+  };
+
   const exportEdit = async () => {
     if (!active) return;
     if (edl.length === 0) {
@@ -627,6 +823,44 @@ export function Editor() {
     } finally {
       setGeneratingBroll(false);
       setBrollProgress(null);
+    }
+  };
+
+  const saveLyrics = async () => {
+    if (!active) return;
+    setSavingLyrics(true);
+    try {
+      await api.setSessionLyrics(active.id, lyricsDraft);
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === active.id ? { ...s, lyrics: lyricsDraft.trim() || null } : s
+        )
+      );
+      push("success", "Letra guardada");
+    } catch (e) {
+      push("error", String(e));
+    } finally {
+      setSavingLyrics(false);
+    }
+  };
+
+  const analyzeTakes = async () => {
+    if (!active) return;
+    setAnalyzingTakes(true);
+    try {
+      const frames = await api.extractReferenceFrames(active.id);
+      setRefFrames(frames);
+      const bad = frames.filter((f) => !f.usable).length;
+      push(
+        "success",
+        bad > 0
+          ? `${frames.length} toma(s) analizadas · ${bad} con problemas`
+          : `${frames.length} toma(s) analizadas · todas usables`
+      );
+    } catch (e) {
+      push("error", String(e));
+    } finally {
+      setAnalyzingTakes(false);
     }
   };
 
@@ -870,7 +1104,7 @@ export function Editor() {
       >
         {active && (
           <>
-            <Button variant="secondary" size="sm" onClick={addMedia} disabled={busy}>
+            <Button variant="secondary" size="xs" onClick={addMedia} disabled={busy}>
               {busy ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
@@ -880,7 +1114,7 @@ export function Editor() {
             </Button>
             <Button
               variant="default"
-              size="sm"
+              size="xs"
               onClick={analyzeMaster}
               disabled={analyzing || !active.masterPath}
               title={
@@ -898,7 +1132,7 @@ export function Editor() {
             </Button>
             <Button
               variant="secondary"
-              size="sm"
+              size="xs"
               onClick={syncPerformance}
               disabled={syncing || !active.masterPath}
               title="Align performance footage audio to the master so it lip-syncs"
@@ -912,7 +1146,7 @@ export function Editor() {
             </Button>
             <Button
               variant="default"
-              size="sm"
+              size="xs"
               onClick={buildEdit}
               disabled={building || !analysis}
               title={
@@ -930,7 +1164,7 @@ export function Editor() {
             </Button>
             <Button
               variant="secondary"
-              size="sm"
+              size="xs"
               onClick={exportEdit}
               disabled={exporting || edl.length === 0}
               title={
@@ -948,7 +1182,7 @@ export function Editor() {
             </Button>
             <Button
               variant="success"
-              size="sm"
+              size="xs"
               onClick={sendToDataset}
               disabled={datasetSending}
               title="Split this session's footage into short clips, identify each as performance / b-roll, caption them and add them to the training dataset"
@@ -962,7 +1196,7 @@ export function Editor() {
             </Button>
             <Button
               variant="default"
-              size="sm"
+              size="xs"
               onClick={generateMv}
               disabled={mvGenerating || !analysis}
               title={
@@ -979,8 +1213,26 @@ export function Editor() {
               Generate music video
             </Button>
             <Button
+              variant="secondary"
+              size="xs"
+              onClick={autoEditVideo}
+              disabled={autoEditing || edl.length === 0}
+              title={
+                edl.length > 0
+                  ? "Auto-edit your real footage into a finished, beat-synced music video (rendered MP4 with the song)"
+                  : "Build the edit first"
+              }
+            >
+              {autoEditing ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Film className="h-4 w-4" />
+              )}
+              Auto-edit video
+            </Button>
+            <Button
               variant="ghost"
-              size="sm"
+              size="xs"
               onClick={() => loadMedia(active.id)}
             >
               <RefreshCw className="h-4 w-4" />
@@ -1137,6 +1389,32 @@ export function Editor() {
                 </div>
               )}
 
+              {autoEditProgress && (
+                <div className="flex items-center gap-2 border-b border-bds-border bg-bds-surface/60 px-4 py-2 text-xs text-bds-muted">
+                  <Film className="h-3.5 w-3.5 animate-pulse text-bds-accent" />
+                  <span className="truncate">{autoEditProgress.message}</span>
+                  <span className="ml-auto tabular-nums">
+                    {autoEditProgress.processed}/{autoEditProgress.total}
+                  </span>
+                </div>
+              )}
+
+              {autoEditPath && (
+                <div className="border-b border-bds-border bg-black/40 p-4">
+                  <div className="mb-2 flex items-center gap-2 text-xs text-bds-muted">
+                    <Film className="h-3.5 w-3.5 text-bds-accent" />
+                    <span>Auto-edited music video (your footage)</span>
+                  </div>
+                  <video
+                    key={autoEditPath}
+                    src={convertFileSrc(autoEditPath)}
+                    controls
+                    playsInline
+                    className="w-full max-h-[60vh] rounded-lg bg-black"
+                  />
+                </div>
+              )}
+
               {analysis && <AnalysisBar analysis={analysis} />}
 
               {edl.length > 0 && (
@@ -1156,7 +1434,26 @@ export function Editor() {
                   media={media}
                   onPreview={(src, title) => setPreview({ src, title })}
                   onSeek={(t) => playerSeekRef.current?.(t)}
+                  onMenu={openSegmentMenu}
                 />
+              )}
+
+              {edl.length > 0 && (
+                <CollapsibleSection
+                  id="director"
+                  title="Director IA"
+                  icon={<BrainCircuit className="h-3.5 w-3.5 text-bds-accent" />}
+                >
+                  <DirectorPanel
+                    sessionId={active.id}
+                    report={report}
+                    busy={directing}
+                    applyingId={applyingId}
+                    onRun={runDirector}
+                    onApply={applySuggestion}
+                    onPreview={(src, title) => setPreview({ src, title })}
+                  />
+                </CollapsibleSection>
               )}
 
               {edl.length > 0 && profile && (
@@ -1168,7 +1465,12 @@ export function Editor() {
               )}
 
               {analysis && (
-                <BrollStudio
+                <CollapsibleSection
+                  id="broll"
+                  title="AI B-roll Studio"
+                  icon={<Wand2 className="h-3.5 w-3.5 text-bds-accent" />}
+                >
+                  <BrollStudio
                   style={style}
                   broll={broll}
                   count={brollCount}
@@ -1176,6 +1478,13 @@ export function Editor() {
                   busy={generatingBroll}
                   progress={brollProgress}
                   engine={engine}
+                  lyrics={lyricsDraft}
+                  onLyricsChange={setLyricsDraft}
+                  onSaveLyrics={saveLyrics}
+                  savingLyrics={savingLyrics}
+                  refFrames={refFrames}
+                  onAnalyzeTakes={analyzeTakes}
+                  analyzingTakes={analyzingTakes}
                   onCount={setBrollCount}
                   onAnimate={setAnimateBroll}
                   onGenerate={generateBroll}
@@ -1185,10 +1494,17 @@ export function Editor() {
                   onDelete={deleteBroll}
                   onPreview={(src, title) => setPreview({ src, title })}
                 />
+                </CollapsibleSection>
               )}
 
               {/* HuMo — image + audio → AI performance clip */}
-              <div className="border-b border-bds-border bg-bds-surface/40 px-4 py-3">
+              <CollapsibleSection
+                id="humo"
+                title="HuMo AI Performance"
+                icon={<Sparkles className="h-3.5 w-3.5 text-bds-accent" />}
+                defaultOpen={false}
+              >
+              <div className="bg-bds-surface/40 px-4 py-3">
                 <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
                   <Badge variant="accent" className="gap-1">
                     <Sparkles className="h-3 w-3" />
@@ -1302,9 +1618,16 @@ export function Editor() {
                   </div>
                 )}
               </div>
+              </CollapsibleSection>
 
               {/* NVIDIA Relight — re-light a clip to match a 360 HDRI */}
-              <div className="border-b border-bds-border bg-bds-surface/40 px-4 py-3">
+              <CollapsibleSection
+                id="relight"
+                title="Relight (HDRI)"
+                icon={<Sparkles className="h-3.5 w-3.5 text-bds-accent" />}
+                defaultOpen={false}
+              >
+              <div className="bg-bds-surface/40 px-4 py-3">
                 <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
                   <Badge variant="accent" className="gap-1">
                     <Sparkles className="h-3 w-3" />
@@ -1412,9 +1735,16 @@ export function Editor() {
                   </div>
                 )}
               </div>
+              </CollapsibleSection>
 
               {/* ACE-Step — text → original music track */}
-              <div className="border-b border-bds-border bg-bds-surface/40 px-4 py-3">
+              <CollapsibleSection
+                id="acestep"
+                title="ACE-Step Music"
+                icon={<Music className="h-3.5 w-3.5 text-bds-accent" />}
+                defaultOpen={false}
+              >
+              <div className="bg-bds-surface/40 px-4 py-3">
                 <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
                   <Badge variant="accent" className="gap-1">
                     <Disc3 className="h-3 w-3" />
@@ -1496,9 +1826,16 @@ export function Editor() {
                   />
                 )}
               </div>
+              </CollapsibleSection>
 
               {/* FLUX.2 Klein — text → image + image editing (NVIDIA fallback) */}
-              <div className="border-b border-bds-border bg-bds-surface/40 px-4 py-3">
+              <CollapsibleSection
+                id="flux"
+                title="AI Image Studio"
+                icon={<ImagePlus className="h-3.5 w-3.5 text-bds-accent" />}
+                defaultOpen={false}
+              >
+              <div className="bg-bds-surface/40 px-4 py-3">
                 <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
                   <Badge variant="accent" className="gap-1">
                     <ImagePlus className="h-3 w-3" />
@@ -1577,6 +1914,7 @@ export function Editor() {
                   />
                 )}
               </div>
+              </CollapsibleSection>
 
               {media.length === 0 ? (
                 <div className="grid flex-1 place-items-center text-center text-bds-muted">
@@ -1630,6 +1968,7 @@ export function Editor() {
                             tint={col.tint}
                             onRole={(r) => changeRole(m, r)}
                             onRemove={() => removeMedia(m)}
+                            onMenu={(e) => openMediaMenu(e, m)}
                           />
                         ))}
                       </div>
@@ -1646,8 +1985,7 @@ export function Editor() {
         <div
           className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80 p-6 backdrop-blur-sm"
           onClick={() => setPreview(null)}
-        >
-          <div
+        >          <div
             className="relative max-h-full max-w-5xl overflow-hidden rounded-lg border border-bds-border bg-bds-surface shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
@@ -1671,6 +2009,15 @@ export function Editor() {
           </div>
         </div>
       )}
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={menu.items}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </>
   );
 }
@@ -1679,11 +2026,13 @@ function MediaCard({
   media: m,
   onRole,
   onRemove,
+  onMenu,
   tint,
 }: {
   media: SessionMedia;
   onRole: (role: MediaRole) => void;
   onRemove: () => void;
+  onMenu?: (e: React.MouseEvent) => void;
   tint?: string;
 }) {
   const thumb = m.thumbnailPath ? convertFileSrc(m.thumbnailPath) : null;
@@ -1691,6 +2040,7 @@ function MediaCard({
     <div
       className="group overflow-hidden rounded-md border border-bds-border bg-bds-surface2/60"
       style={tint ? { borderLeft: `3px solid ${tint}` } : undefined}
+      onContextMenu={onMenu}
     >
       <div className="relative aspect-video w-full bg-black/40">
         {thumb ? (
@@ -2085,16 +2435,169 @@ function EdlPlayer({
   );
 }
 
+function DirectorPanel({
+  sessionId,
+  report,
+  busy,
+  applyingId,
+  onRun,
+  onApply,
+  onPreview,
+}: {
+  sessionId: number;
+  report: EditAgentReport | null;
+  busy: boolean;
+  applyingId: string | null;
+  onRun: () => void;
+  onApply: (s: EditSuggestion) => void;
+  onPreview?: (src: string, title: string) => void;
+}) {
+  const [effects, setEffects] = useState<EditEffect[]>([]);
+  const [previewing, setPreviewing] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.listEditEffects().then(setEffects).catch(() => setEffects([]));
+  }, []);
+
+  const sevColor = (s: string) =>
+    s === "high" ? "#ef4444" : s === "medium" ? "#f59e0b" : "#22d3ee";
+
+  const tryPreview = async (s: EditSuggestion) => {
+    if (s.segmentIndex == null || !s.effectId) return;
+    setPreviewing(s.id);
+    try {
+      const path = await api.renderEffectPreview(
+        sessionId,
+        s.segmentIndex,
+        s.effectId
+      );
+      onPreview?.(convertFileSrc(path), s.title);
+    } catch {
+      /* preview optional — disk/Node may be offline */
+    } finally {
+      setPreviewing(null);
+    }
+  };
+
+  return (
+    <div className="border-b border-bds-border bg-bds-surface/40 px-4 py-3">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <Button onClick={onRun} disabled={busy} size="sm" className="gap-1">
+          {busy ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <BrainCircuit className="h-4 w-4" />
+          )}
+          Director IA
+        </Button>
+        {report && (
+          <>
+            <Badge variant="accent">{report.suggestions.length} ideas</Badge>
+            <span className="text-[11px] text-bds-muted">
+              {report.model.split("/").pop()} · {report.pacing} ·{" "}
+              {Math.round(report.stats.bpm)} BPM ·{" "}
+              {report.stats.beatsPerCut.toFixed(1)} beats/cut
+            </span>
+          </>
+        )}
+      </div>
+
+      {report?.summary && (
+        <p className="mb-2 text-xs leading-relaxed text-bds-fg">
+          {report.summary}
+        </p>
+      )}
+
+      {report && report.suggestions.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          {report.suggestions.map((s) => (
+            <div
+              key={s.id}
+              className="flex items-start gap-2 rounded-md border border-bds-border bg-black/20 px-2.5 py-2"
+            >
+              <span
+                className="mt-1 h-2 w-2 shrink-0 rounded-full"
+                style={{ backgroundColor: sevColor(s.severity) }}
+                title={s.severity}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-bds-fg">
+                  {s.title}
+                  <span className="rounded bg-bds-border/50 px-1 text-[9px] uppercase text-bds-muted">
+                    {s.kind}
+                  </span>
+                </div>
+                <p className="text-[11px] text-bds-muted">{s.rationale}</p>
+              </div>
+              {s.effectId && s.segmentIndex != null && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="gap-1"
+                  disabled={previewing === s.id}
+                  onClick={() => tryPreview(s)}
+                >
+                  {previewing === s.id ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Play className="h-3 w-3" />
+                  )}
+                  Preview
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant={s.applied ? "ghost" : "default"}
+                className="gap-1"
+                disabled={s.applied || applyingId === s.id}
+                onClick={() => onApply(s)}
+              >
+                {applyingId === s.id ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : s.applied ? (
+                  <Check className="h-3 w-3" />
+                ) : (
+                  <Wand2 className="h-3 w-3" />
+                )}
+                {s.applied ? "Hecho" : "Aplicar"}
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {report && report.suggestions.length === 0 && (
+        <p className="text-xs text-bds-muted">
+          El montaje ya está bien equilibrado — sin cambios sugeridos.
+        </p>
+      )}
+
+      {effects.length > 0 && (
+        <p className="mt-2 text-[10px] text-bds-muted">
+          {effects.length} efectos Remotion: {effects.map((e) => e.label).join(", ")}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function EdlTimeline({
   edl,
   media,
   onPreview,
   onSeek,
+  onMenu,
 }: {
   edl: EditSegment[];
   media: SessionMedia[];
   onPreview?: (src: string, title: string) => void;
   onSeek?: (t: number) => void;
+  onMenu?: (
+    e: React.MouseEvent,
+    seg: EditSegment,
+    src: string | null,
+    name: string
+  ) => void;
 }) {
   const total =
     edl.length > 0 ? edl[edl.length - 1].timelineOut || 1 : 1;
@@ -2166,6 +2669,9 @@ function EdlTimeline({
             <div
               key={s.id}
               onClick={() => onSeek?.(s.timelineIn)}
+              onContextMenu={(e) =>
+                onMenu?.(e, s, thumb, nameOf(s.mediaId))
+              }
               className={cn(
                 "group relative h-16 w-24 shrink-0 cursor-pointer overflow-hidden rounded-md border bg-black/40 text-left transition hover:ring-2 hover:ring-bds-accent"
               )}
@@ -2174,7 +2680,7 @@ function EdlTimeline({
                 s.reason ?? ""
               }\n${formatDuration(s.timelineIn)}–${formatDuration(
                 s.timelineOut
-              )} (${dur.toFixed(1)}s) · click para reproducir desde aquí`}
+              )} (${dur.toFixed(1)}s) · click para reproducir · clic derecho para más`}
             >
               {thumb ? (
                 <img
@@ -2389,6 +2895,89 @@ const BROLL_STATUS: Record<
   failed: { label: "Failed", variant: "bad" },
 };
 
+const VERDICT_META: Record<
+  ReferenceFrame["verdict"],
+  { label: string; variant: "good" | "warn" | "bad" | "info" }
+> = {
+  good: { label: "Buena", variant: "good" },
+  shaky: { label: "Movida", variant: "bad" },
+  soft: { label: "Desenfocada", variant: "bad" },
+  dark: { label: "Exposición", variant: "warn" },
+  unknown: { label: "Sin datos", variant: "info" },
+};
+
+function ReferenceFrameCard({
+  frame,
+  onPreview,
+}: {
+  frame: ReferenceFrame;
+  onPreview?: (src: string, title: string) => void;
+}) {
+  const meta = VERDICT_META[frame.verdict] ?? VERDICT_META.unknown;
+  const src = frame.framePath ? convertFileSrc(frame.framePath) : null;
+  return (
+    <div
+      className={cn(
+        "overflow-hidden rounded-md border bg-bds-surface",
+        frame.usable ? "border-bds-border" : "border-bds-bad/50"
+      )}
+    >
+      <button
+        type="button"
+        disabled={!src}
+        onClick={() => src && onPreview?.(src, frame.filename)}
+        className="relative block aspect-video w-full overflow-hidden bg-black/40 cursor-pointer"
+        title={src ? "Ver frame" : "Sin frame"}
+      >
+        {src ? (
+          <img
+            src={src}
+            alt={frame.filename}
+            className={cn(
+              "h-full w-full object-cover",
+              !frame.usable && "opacity-70"
+            )}
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-bds-muted">
+            <Film className="h-5 w-5" />
+          </div>
+        )}
+        <span className="absolute left-1 top-1">
+          <Badge variant={meta.variant} className="gap-1 text-[9px]">
+            {!frame.usable && <AlertTriangle className="h-3 w-3" />}
+            {meta.label}
+          </Badge>
+        </span>
+        <span className="absolute bottom-1 right-1 rounded bg-black/60 px-1 text-[9px] text-white/80">
+          {Math.round(frame.score * 100)}%
+        </span>
+      </button>
+      <div className="p-1.5">
+        <p className="truncate text-[10px] text-bds-fg" title={frame.filename}>
+          {frame.filename}
+        </p>
+        <p className="text-[9px] uppercase tracking-wide text-bds-muted">
+          {frame.role}
+        </p>
+        {frame.issues.length > 0 && (
+          <p className="mt-0.5 text-[9px] leading-snug text-bds-bad">
+            {frame.issues.join(" · ")}
+          </p>
+        )}
+        {frame.caption && (
+          <p
+            className="mt-0.5 line-clamp-3 text-[9px] leading-snug text-bds-muted"
+            title={frame.caption}
+          >
+            {frame.caption}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function BrollStudio({
   style,
   broll,
@@ -2397,6 +2986,13 @@ function BrollStudio({
   busy,
   progress,
   engine,
+  lyrics,
+  onLyricsChange,
+  onSaveLyrics,
+  savingLyrics,
+  refFrames,
+  onAnalyzeTakes,
+  analyzingTakes,
   onCount,
   onAnimate,
   onGenerate,
@@ -2413,6 +3009,13 @@ function BrollStudio({
   busy: boolean;
   progress: BrollProgress | null;
   engine: EngineStatus | null;
+  lyrics: string;
+  onLyricsChange: (v: string) => void;
+  onSaveLyrics: () => void;
+  savingLyrics: boolean;
+  refFrames: ReferenceFrame[];
+  onAnalyzeTakes: () => void;
+  analyzingTakes: boolean;
   onCount: (n: number) => void;
   onAnimate: (v: boolean) => void;
   onGenerate: () => void;
@@ -2492,6 +3095,85 @@ function BrollStudio({
           <span className="min-w-0 flex-1 truncate text-[11px] text-bds-muted">
             {style.descriptor}
           </span>
+        )}
+      </div>
+
+      {/* Lyrics — grounds the concept analysis + B-roll generation */}
+      <div className="mb-3 rounded-md border border-bds-border bg-bds-surface2/40 p-2">
+        <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-bds-muted">
+          <FileText className="h-3.5 w-3.5" />
+          Letra de la canción
+          <span className="text-bds-muted/70">
+            · da contexto al concepto y a los b-rolls
+          </span>
+        </div>
+        <textarea
+          value={lyrics}
+          onChange={(e) => onLyricsChange(e.target.value)}
+          placeholder="Pega aquí la letra para que la IA entienda el concepto…"
+          rows={3}
+          className="w-full resize-y rounded-md border border-bds-border bg-bds-surface px-2 py-1.5 text-[11px] leading-relaxed text-bds-fg focus-ring"
+        />
+        <div className="mt-1.5 flex justify-end">
+          <Button
+            variant="secondary"
+            size="sm"
+            className="h-7"
+            disabled={savingLyrics}
+            onClick={onSaveLyrics}
+          >
+            {savingLyrics ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              "Guardar letra"
+            )}
+          </Button>
+        </div>
+      </div>
+
+      {/* Reference frames — extract screenshots from real takes + flag bad ones */}
+      <div className="mb-3 rounded-md border border-bds-border bg-bds-surface2/40 p-2">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1.5 text-[11px] text-bds-muted">
+            <ScanSearch className="h-3.5 w-3.5" />
+            Tomas de referencia
+            <span className="text-bds-muted/70">
+              · extrae un frame por toma y detecta planos movidos
+            </span>
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            className="ml-auto h-7"
+            disabled={analyzingTakes}
+            onClick={onAnalyzeTakes}
+          >
+            {analyzingTakes ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Analizando…
+              </>
+            ) : (
+              "Analizar tomas"
+            )}
+          </Button>
+        </div>
+
+        {refFrames.length === 0 ? (
+          <p className="text-[11px] text-bds-muted">
+            Aún sin analizar. Pulsa “Analizar tomas” para extraer screenshots de
+            referencia de las tomas de performance y story.
+          </p>
+        ) : (
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+            {refFrames.map((f) => (
+              <ReferenceFrameCard
+                key={f.mediaId}
+                frame={f}
+                onPreview={onPreview}
+              />
+            ))}
+          </div>
         )}
       </div>
 

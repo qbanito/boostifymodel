@@ -152,6 +152,8 @@ pub fn init(conn: &Connection) -> Result<()> {
     // Master-audio analysis columns on edit_sessions (added after Phase 0).
     let _ = conn.execute("ALTER TABLE edit_sessions ADD COLUMN bpm REAL", []);
     let _ = conn.execute("ALTER TABLE edit_sessions ADD COLUMN analysis TEXT", []);
+    // Song lyrics on edit_sessions (Phase 6.4 — concept-aware B-roll).
+    let _ = conn.execute("ALTER TABLE edit_sessions ADD COLUMN lyrics TEXT", []);
     // Performance lip-sync alignment columns on session_media (Phase 4.5).
     let _ = conn.execute(
         "ALTER TABLE session_media ADD COLUMN audio_offset REAL",
@@ -630,6 +632,7 @@ fn row_to_session(r: &rusqlite::Row) -> rusqlite::Result<EditSession> {
         master_duration: r.get("master_duration")?,
         sequence_fps: r.get("sequence_fps")?,
         status: r.get("status")?,
+        lyrics: r.get("lyrics").ok().flatten(),
         created_at: r.get("created_at")?,
     })
 }
@@ -665,6 +668,26 @@ pub fn set_session_status(conn: &Connection, id: i64, status: &str) -> Result<()
     conn.execute(
         "UPDATE edit_sessions SET status=?2 WHERE id=?1",
         params![id, status],
+    )?;
+    Ok(())
+}
+
+/// Rename an edit session.
+pub fn rename_session(conn: &Connection, id: i64, name: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE edit_sessions SET name=?2 WHERE id=?1",
+        params![id, name],
+    )?;
+    Ok(())
+}
+
+/// Store/replace the session's song lyrics (empty string clears them).
+pub fn set_session_lyrics(conn: &Connection, id: i64, lyrics: &str) -> Result<()> {
+    let trimmed = lyrics.trim();
+    let value: Option<&str> = if trimmed.is_empty() { None } else { Some(trimmed) };
+    conn.execute(
+        "UPDATE edit_sessions SET lyrics=?2 WHERE id=?1",
+        params![id, value],
     )?;
     Ok(())
 }

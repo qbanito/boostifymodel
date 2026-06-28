@@ -170,6 +170,7 @@ export interface EditSession {
   masterDuration: number | null;
   sequenceFps: number;
   status: string; // draft | classified | edited | exported
+  lyrics: string | null;
   createdAt: string;
 }
 
@@ -237,6 +238,48 @@ export interface EditSegment {
   reason: string | null;
 }
 
+export interface EditEffect {
+  id: string;
+  label: string;
+  category: string;
+  description: string;
+}
+
+export interface TimelineStats {
+  segmentCount: number;
+  totalSeconds: number;
+  avgCutSeconds: number;
+  bpm: number;
+  beatsPerCut: number;
+  performancePct: number;
+  storyPct: number;
+  brollCount: number;
+  slowmoCount: number;
+  offBeatCuts: number;
+}
+
+export interface EditSuggestion {
+  id: string;
+  title: string;
+  kind: string;
+  target: string;
+  severity: string;
+  rationale: string;
+  action: string;
+  segmentIndex: number | null;
+  value: number | null;
+  effectId: string | null;
+  applied: boolean;
+}
+
+export interface EditAgentReport {
+  model: string;
+  summary: string;
+  pacing: string;
+  stats: TimelineStats;
+  suggestions: EditSuggestion[];
+}
+
 export interface EditProfile {
   cadence: number;
   performanceBias: number;
@@ -264,6 +307,20 @@ export interface StyleReference {
   descriptor: string;
   keyframes: string[];
   artist: string | null;
+}
+
+/** A representative reference frame extracted from one take, with its verdict. */
+export interface ReferenceFrame {
+  mediaId: number;
+  role: string;
+  filename: string;
+  time: number;
+  framePath: string | null;
+  verdict: "good" | "shaky" | "soft" | "dark" | "unknown";
+  score: number;
+  usable: boolean;
+  issues: string[];
+  caption: string | null;
 }
 
 /** An AI-generated B-roll asset that can be reviewed and inserted. */

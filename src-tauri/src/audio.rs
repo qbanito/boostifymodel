@@ -267,6 +267,60 @@ fn beat_grid(bpm: f64, first: f64, duration: f64) -> Vec<f64> {
     beats
 }
 
+/// Snap each ideal grid beat to the strongest nearby onset peak. A perfectly
+/// periodic grid slowly drifts out of phase on real songs (tempo is never
+/// machine-exact); snapping each beat by at most ~a fifth of a beat to the
+/// actual transient keeps the global tempo but lands downbeats on the real
+/// hits the editor cuts on. Beats with no onset nearby keep the grid time.
+fn snap_beats_to_onsets(beats: &[f64], nov: &[f32], bpm: f64) -> Vec<f64> {
+    let frame_period = HOP as f64 / SR as f64;
+    if nov.is_empty() || beats.is_empty() {
+        return beats.to_vec();
+    }
+    let period = 60.0 / bpm.max(1.0);
+    let tol_frames = ((period * 0.18) / frame_period).round().max(1.0) as i64;
+    let peak = nov.iter().cloned().fold(0.0f32, f32::max).max(1e-6);
+    let thresh = peak * 0.15;
+    let last_idx = nov.len() as i64 - 1;
+
+    let mut snapped: Vec<f64> = Vec::with_capacity(beats.len());
+    for &b in beats {
+        let center = (b / frame_period).round() as i64;
+        let lo = (center - tol_frames).max(0);
+        let hi = (center + tol_frames).min(last_idx);
+        let mut best_i = center.clamp(0, last_idx);
+        let mut best_score = f32::MIN;
+        let mut i = lo;
+        while i <= hi {
+            let dist = (i - center).abs() as f64 / tol_frames as f64;
+            // Strong onset, lightly penalised for straying from the grid.
+            let score = nov[i as usize] - (dist * 0.15 * peak as f64) as f32;
+            if score > best_score {
+                best_score = score;
+                best_i = i;
+            }
+            i += 1;
+        }
+        let t = if nov[best_i as usize] >= thresh {
+            best_i as f64 * frame_period
+        } else {
+            b
+        };
+        snapped.push((t * 1000.0).round() / 1000.0);
+    }
+
+    // Keep the result strictly increasing after snapping.
+    let mut mono: Vec<f64> = Vec::with_capacity(snapped.len());
+    let mut last = f64::MIN;
+    for t in snapped {
+        if t > last + 1e-3 {
+            mono.push(t);
+            last = t;
+        }
+    }
+    mono
+}
+
 /// Segment the song into structural sections by smoothed loudness level.
 fn detect_sections(env: &[f32], duration: f64) -> Vec<SongSection> {
     if env.is_empty() || duration <= 0.0 {
@@ -386,6 +440,8 @@ pub fn analyze_master(path: &Path, duration_hint: Option<f64>) -> Option<MasterA
     let bpm = estimate_bpm(&nov);
     let first = first_onset(&nov);
     let beats = beat_grid(bpm, first, duration);
+    let beats = snap_beats_to_onsets(&beats, &nov, bpm);
+    let first = beats.first().copied().unwrap_or(first);
     let sections = detect_sections(&env, duration);
 
     Some(MasterAnalysis {

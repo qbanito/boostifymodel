@@ -5,6 +5,35 @@
 @layer base {
   :root {
     color-scheme: dark;
+    /* Dark palette (default) — RGB triplets for tailwind alpha support */
+    --bds-bg: 11 13 16;
+    --bds-surface: 18 21 25;
+    --bds-surface2: 23 27 33;
+    --bds-border: 35 41 50;
+    --bds-fg: 231 236 242;
+    --bds-muted: 139 151 166;
+    --bds-accent: 255 106 43;
+    --bds-accent2: 255 176 46;
+    --bds-good: 57 217 138;
+    --bds-warn: 255 176 46;
+    --bds-bad: 255 93 93;
+    --bds-info: 78 168 255;
+  }
+
+  html.light {
+    color-scheme: light;
+    --bds-bg: 245 247 250;
+    --bds-surface: 255 255 255;
+    --bds-surface2: 237 241 246;
+    --bds-border: 214 221 230;
+    --bds-fg: 24 31 41;
+    --bds-muted: 94 107 124;
+    --bds-accent: 234 88 17;
+    --bds-accent2: 217 130 12;
+    --bds-good: 22 163 96;
+    --bds-warn: 200 130 10;
+    --bds-bad: 220 60 60;
+    --bds-info: 36 120 220;
   }
 
   * {

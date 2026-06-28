@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
+use crate::footage::FootageProfile;
 use crate::models::{EditProfile, EditSegment, EditSession, MasterAnalysis, SessionMedia};
 
 /// Shortest cut we will ever place on the timeline (seconds).
@@ -86,6 +87,7 @@ pub fn build_edl(
     analysis: &MasterAnalysis,
     media: &[SessionMedia],
     profile: &EditProfile,
+    footage: &HashMap<i64, FootageProfile>,
 ) -> Vec<EditSegment> {
     let videos: Vec<&SessionMedia> = media.iter().filter(|m| m.kind == "video").collect();
     if videos.is_empty() {
@@ -150,6 +152,9 @@ pub fn build_edl(
     let mut last_layer: Option<i64> = None;
     let mut since_broll = 0usize;
     let mut cursors: HashMap<i64, f64> = HashMap::new();
+    // Source windows already consumed per clip, so the take's best moment is
+    // not reused twice when a single clip is cut into more than once.
+    let mut used_spans: HashMap<i64, Vec<(f64, f64)>> = HashMap::new();
     let mut used: HashMap<i64, usize> = HashMap::new();
     let mut segments: Vec<EditSegment> = Vec::new();
 
@@ -299,23 +304,48 @@ pub fn build_edl(
                 src_in = src_in.max(0.0);
             }
         } else {
-            src_in = *cursors.get(&m.id).unwrap_or(&HEAD_MARGIN);
-            if dur > 0.0 {
-                if need + 2.0 * HEAD_MARGIN > dur {
-                    need = (dur - 2.0 * HEAD_MARGIN).max(0.0).min(dur);
-                    if need <= 0.0 {
-                        need = dur.min(timeline_dur);
-                    }
-                    src_in = ((dur - need) / 2.0).max(0.0);
-                } else if src_in + need + HEAD_MARGIN > dur {
-                    src_in = HEAD_MARGIN;
+            // Prefer the best in-shot MOMENT of this take: a well-exposed,
+            // sharp window whose motion matches the section energy (punchy on
+            // drops/builds, calm holds elsewhere) and that we have not used
+            // yet. This is what makes the edit "make sense" — cuts land on good
+            // content inside the right shot instead of a blind cursor sweep.
+            let want_motion = matches!(label.as_str(), "drop" | "build");
+            let picked = footage.get(&m.id).and_then(|fp| {
+                let avail = if dur > 0.0 { dur } else { fp.duration };
+                let mut n = need;
+                if n + 2.0 * HEAD_MARGIN > avail {
+                    n = (avail - 2.0 * HEAD_MARGIN).max(0.0);
                 }
+                if n <= 0.0 {
+                    return None;
+                }
+                let spans = used_spans.get(&m.id).map(|v| v.as_slice()).unwrap_or(&[]);
+                fp.best_window(n, want_motion, spans, HEAD_MARGIN).map(|s| (s, n))
+            });
+            if let Some((s, n)) = picked {
+                need = n;
+                src_in = s;
             } else {
-                src_in = 0.0;
+                // Fallback: sequential cursor through the clip (no profile).
+                src_in = *cursors.get(&m.id).unwrap_or(&HEAD_MARGIN);
+                if dur > 0.0 {
+                    if need + 2.0 * HEAD_MARGIN > dur {
+                        need = (dur - 2.0 * HEAD_MARGIN).max(0.0).min(dur);
+                        if need <= 0.0 {
+                            need = dur.min(timeline_dur);
+                        }
+                        src_in = ((dur - need) / 2.0).max(0.0);
+                    } else if src_in + need + HEAD_MARGIN > dur {
+                        src_in = HEAD_MARGIN;
+                    }
+                } else {
+                    src_in = 0.0;
+                }
             }
         }
         let src_out = src_in + need;
         cursors.insert(m.id, src_out + REUSE_GAP);
+        used_spans.entry(m.id).or_default().push((src_in, src_out));
 
         // Bookkeeping for variation, usage balance + b-roll cadence.
         recent.push_back(m.id);

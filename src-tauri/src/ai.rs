@@ -22,6 +22,113 @@ use crate::splitter::FrameStats;
 /// classification. Override per-install via Settings (`nim_model`).
 pub const DEFAULT_NIM_VLM: &str = "nvidia/llama-3.1-nemotron-nano-vl-8b-v1";
 
+/// Free NVIDIA text reasoners used by the AI editor agent, in preference order.
+/// Verified account-accessible on the hosted gateway; the first that answers
+/// wins. `super-49b` is the strongest reasoner, `llama-3.3-70b` the fallback.
+pub const EDITOR_TEXT_MODELS: &[&str] = &[
+    "nvidia/llama-3.3-nemotron-super-49b-v1",
+    "meta/llama-3.3-70b-instruct",
+];
+
+/// Ask a free NVIDIA text reasoner to return a STRICT JSON object. Tries each
+/// model in `EDITOR_TEXT_MODELS` until one answers; returns the parsed JSON
+/// value plus the model name that produced it. `None` when no key is set or
+/// every model fails / returns unparseable output (caller then uses heuristics).
+pub fn reason_json(
+    system: &str,
+    user: &str,
+    nim_api_key: &str,
+    nim_model_override: &str,
+) -> Option<(serde_json::Value, String)> {
+    let nim_key = first_nonempty(nim_api_key, &["NIM_API_KEY", "NVIDIA_API_KEY"]);
+    if nim_key.is_empty() {
+        return None;
+    }
+    // Honour an explicit override first, then the curated free reasoners.
+    let mut models: Vec<&str> = Vec::new();
+    let ov = nim_model_override.trim();
+    if !ov.is_empty() && !ov.contains("-vl-") {
+        models.push(ov);
+    }
+    for m in EDITOR_TEXT_MODELS {
+        if !models.contains(m) {
+            models.push(m);
+        }
+    }
+
+    for model in models {
+        if let Some((val, _)) = reason_json_once(&nim_key, model, system, user) {
+            return Some((val, model.to_string()));
+        }
+    }
+    None
+}
+
+/// Single text chat-completion request expecting a JSON object back.
+fn reason_json_once(
+    api_key: &str,
+    model: &str,
+    system: &str,
+    user: &str,
+) -> Option<(serde_json::Value, String)> {
+    let body = serde_json::json!({
+        "model": model,
+        "max_tokens": 1800,
+        "temperature": 0.4,
+        "response_format": { "type": "json_object" },
+        "messages": [
+            { "role": "system", "content": system },
+            { "role": "user", "content": user }
+        ]
+    });
+
+    let resp = ureq::post("https://integrate.api.nvidia.com/v1/chat/completions")
+        .set("Authorization", &format!("Bearer {api_key}"))
+        .set("Accept", "application/json")
+        .timeout(std::time::Duration::from_secs(90))
+        .send_json(body);
+
+    let json: serde_json::Value = match resp {
+        Ok(r) => r.into_json().ok()?,
+        Err(ureq::Error::Status(code, r)) => {
+            let detail = r
+                .into_string()
+                .unwrap_or_default()
+                .chars()
+                .take(300)
+                .collect::<String>();
+            eprintln!("[reason] {model} returned HTTP {code}: {detail}");
+            return None;
+        }
+        Err(e) => {
+            eprintln!("[reason] {model} request failed: {e}");
+            return None;
+        }
+    };
+
+    let content = json
+        .pointer("/choices/0/message/content")
+        .and_then(|v| v.as_str())?
+        .trim()
+        .to_string();
+    let parsed = parse_loose_json(&content)?;
+    Some((parsed, model.to_string()))
+}
+
+/// Parse a JSON object out of a model reply, tolerating ```json fences or
+/// leading/trailing prose around the object.
+fn parse_loose_json(text: &str) -> Option<serde_json::Value> {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(text) {
+        return Some(v);
+    }
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    serde_json::from_str::<serde_json::Value>(&text[start..=end]).ok()
+}
+
 /// Local heuristic scene analysis from frame statistics + filename cues.
 /// Replace/augment with YOLO + MediaPipe results when a sidecar is available.
 pub fn analyze_scene(stats: &FrameStats, filename: &str, duration: f64) -> SceneAnalysis {
@@ -252,6 +359,91 @@ pub fn generate_caption(
     }
 
     heuristic_caption(a, artist)
+}
+
+/// Describe the visual concept of a single music-video frame in one vivid
+/// sentence (subject, setting, mood, color grade, lighting, framing), grounded
+/// by the song lyrics so generated B-roll matches the song's concept. Returns
+/// `None` when no vision model is reachable (caller can skip the caption).
+pub fn describe_frame(
+    thumb: &std::path::Path,
+    lyrics: Option<&str>,
+    artist: Option<&str>,
+    openai_api_key: &str,
+    nim_api_key: &str,
+    nim_model: &str,
+) -> Option<String> {
+    let openai_key = first_nonempty(openai_api_key, &["OPENAI_API_KEY"]);
+    let nim_key = first_nonempty(nim_api_key, &["NIM_API_KEY", "NVIDIA_API_KEY"]);
+    let b64 = read_image_b64(thumb)?;
+    let prompt = concept_prompt(lyrics, artist);
+
+    if !openai_key.is_empty() {
+        if let Some(c) = vlm_caption(
+            "https://api.openai.com/v1/chat/completions",
+            &openai_key,
+            "gpt-4o-mini",
+            &prompt,
+            &b64,
+        ) {
+            return Some(c);
+        }
+    }
+    if !nim_key.is_empty() {
+        // Try the configured model first, then known-good free NVIDIA VLMs.
+        // (A stale setting like `meta/llama-3.2-11b-vision-instruct` 404s on
+        // trial keys, so we must not give up after the first failure — that
+        // would leave B-roll with no real concepts and fall back to generic
+        // stock ideas.)
+        let mut models: Vec<&str> = Vec::new();
+        let configured = nim_model.trim();
+        if !configured.is_empty() {
+            models.push(configured);
+        }
+        for m in [DEFAULT_NIM_VLM, "nvidia/nemotron-nano-12b-v2-vl"] {
+            if !models.contains(&m) {
+                models.push(m);
+            }
+        }
+        for model in models {
+            if let Some(c) = vlm_caption(
+                "https://integrate.api.nvidia.com/v1/chat/completions",
+                &nim_key,
+                model,
+                &prompt,
+                &b64,
+            ) {
+                return Some(c);
+            }
+        }
+    }
+    None
+}
+
+/// Build the concept-analysis instruction, optionally grounding the model with
+/// the song lyrics so the description matches the song's theme and emotion.
+fn concept_prompt(lyrics: Option<&str>, artist: Option<&str>) -> String {
+    let who = artist
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+        .map(|a| format!(" The performing artist is {a}."))
+        .unwrap_or_default();
+    let lyric_ctx = lyrics
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let snippet: String = l.chars().take(600).collect();
+            format!(
+                " Song lyrics for context (match the theme and emotion): \"{snippet}\"."
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "You are a music-video creative director. In ONE vivid sentence, describe the \
+         visual concept of this frame: main subject, setting/location, mood, color grade, \
+         lighting and framing.{who}{lyric_ctx} Reply with only the sentence, no preamble, \
+         quotes or list markers."
+    )
 }
 
 /// Returns `primary` when non-empty, otherwise the first non-empty value found

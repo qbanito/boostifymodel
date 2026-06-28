@@ -2,8 +2,10 @@ mod ai;
 mod audio;
 mod dataset;
 mod db;
+mod edit_agent;
 mod editor;
 mod engine;
+mod footage;
 mod genai;
 mod gpu_server;
 mod humo;
@@ -336,6 +338,20 @@ fn delete_edit_session(
 }
 
 #[tauri::command]
+fn rename_edit_session(
+    session_id: i64,
+    name: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("el nombre no puede estar vacío".to_string());
+    }
+    let conn = state.conn.lock().unwrap();
+    db::rename_session(&conn, session_id, trimmed).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn list_session_media(
     session_id: i64,
     state: State<'_, Arc<AppState>>,
@@ -430,7 +446,22 @@ fn build_session_edl(
     let media = db::list_session_media(&conn, session_id).map_err(|e| e.to_string())?;
     let profile = db::get_edit_profile(&conn).map_err(|e| e.to_string())?;
 
-    let segments = editor::build_edl(&session, &analysis, &media, &profile);
+    // Analyse the uploaded footage so the editor cuts to the best MOMENT of the
+    // right take (shot boundaries + exposure / sharpness / motion per window),
+    // instead of a blind sequential window.
+    let mut footage: std::collections::HashMap<i64, footage::FootageProfile> =
+        std::collections::HashMap::new();
+    for m in &media {
+        if m.kind != "video" {
+            continue;
+        }
+        let dur = m.duration_seconds.unwrap_or(0.0);
+        if let Some(fp) = footage::analyze(std::path::Path::new(&m.path), dur) {
+            footage.insert(m.id, fp);
+        }
+    }
+
+    let segments = editor::build_edl(&session, &analysis, &media, &profile, &footage);
     if segments.is_empty() {
         return Err("no usable footage to build an edit".to_string());
     }
@@ -446,6 +477,134 @@ fn list_session_edl(
     let conn = state.conn.lock().unwrap();
     db::list_edit_segments(&conn, session_id).map_err(|e| e.to_string())
 }
+
+/// AI editor agent: analyse the session timeline and return concrete edit notes
+/// (cut pacing, speed ramps, b-roll, transitions, Remotion effects). Uses a free
+/// NVIDIA text reasoner, falling back to deterministic heuristics.
+#[tauri::command]
+fn run_edit_agent(
+    session_id: i64,
+    state: State<'_, Arc<AppState>>,
+) -> Result<models::EditAgentReport, String> {
+    let conn = state.conn.lock().unwrap();
+    let session = db::get_session(&conn, session_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "session not found".to_string())?;
+    let analysis = db::get_session_analysis(&conn, session_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "analyze the master audio first".to_string())?;
+    let media = db::list_session_media(&conn, session_id).map_err(|e| e.to_string())?;
+    let segments = db::list_edit_segments(&conn, session_id).map_err(|e| e.to_string())?;
+    if segments.is_empty() {
+        return Err("build the edit first".to_string());
+    }
+    let profile = db::get_edit_profile(&conn).map_err(|e| e.to_string())?;
+    let settings = state.load_settings(&conn);
+    Ok(edit_agent::analyze(
+        &session, &analysis, &media, &segments, &profile, &settings,
+    ))
+}
+
+/// Apply one AI suggestion's action to the timeline (speed ramp, split, mark)
+/// and persist the new EDL. Returns the updated timeline.
+#[tauri::command]
+fn apply_edit_suggestion(
+    session_id: i64,
+    suggestion: models::EditSuggestion,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<EditSegment>, String> {
+    let mut conn = state.conn.lock().unwrap();
+    let segments = db::list_edit_segments(&conn, session_id).map_err(|e| e.to_string())?;
+    let updated = edit_agent::apply_suggestion(&segments, &suggestion)?;
+    db::replace_edit_segments(&mut conn, session_id, &updated).map_err(|e| e.to_string())?;
+    db::list_edit_segments(&conn, session_id).map_err(|e| e.to_string())
+}
+
+/// Remotion effect catalog the agent can propose / preview.
+#[tauri::command]
+fn list_edit_effects() -> Result<Vec<models::EditEffect>, String> {
+    Ok(edit_agent::effect_catalog())
+}
+
+/// Render a short preview of a Remotion effect applied to one timeline segment.
+/// Extracts the segment clip, then renders the `EditEffect` composition. Returns
+/// the path to the preview MP4. Requires Node + the bundled `/remotion` project.
+#[tauri::command]
+fn render_effect_preview(
+    session_id: i64,
+    segment_index: i64,
+    effect_id: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<String, String> {
+    let (media, segments) = {
+        let conn = state.conn.lock().unwrap();
+        let media = db::list_session_media(&conn, session_id).map_err(|e| e.to_string())?;
+        let segments = db::list_edit_segments(&conn, session_id).map_err(|e| e.to_string())?;
+        (media, segments)
+    };
+    let seg = segments
+        .iter()
+        .find(|s| s.order_index == segment_index)
+        .ok_or_else(|| "segment not found".to_string())?;
+    let src = media
+        .iter()
+        .find(|m| m.id == seg.media_id)
+        .ok_or_else(|| "source clip not found".to_string())?;
+
+    let remotion_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "remotion dir not found".to_string())?
+        .join("remotion");
+    let public = remotion_dir.join("public");
+    std::fs::create_dir_all(&public).map_err(|e| e.to_string())?;
+
+    // Extract the segment clip into remotion/public so the composition can load
+    // it via staticFile(). Cap to 4s so previews are fast.
+    let seg_dur = (seg.src_out - seg.src_in).clamp(0.5, 4.0);
+    let clip = public.join("preview_src.mp4");
+    if !splitter::extract_clip(
+        std::path::Path::new(&src.path),
+        splitter::Segment {
+            start: seg.src_in,
+            end: seg.src_in + seg_dur,
+        },
+        &clip,
+    ) {
+        return Err("could not extract source clip (disk connected?)".to_string());
+    }
+
+    let fps = 30u32;
+    let frames = ((seg_dur * fps as f64).round() as i64).clamp(15, 120);
+    let out_dir = state.work_dir().join("fx").join(session_id.to_string());
+    let _ = std::fs::create_dir_all(&out_dir);
+    let out = out_dir.join(format!("fx_{}_{}_{}.mp4", segment_index, effect_id, nanos()));
+    let props = serde_json::json!({
+        "effectId": effect_id,
+        "clipSeconds": seg_dur,
+        "fps": fps,
+    })
+    .to_string();
+
+    let npx = system::resolve_bin("npx", "NPX_PATH");
+    let status = std::process::Command::new(npx)
+        .current_dir(&remotion_dir)
+        .args([
+            "remotion",
+            "render",
+            "EditEffect",
+            &out.to_string_lossy(),
+            "--props",
+            &props,
+            &format!("--frames=0-{}", frames - 1),
+        ])
+        .status()
+        .map_err(|e| format!("remotion render failed to start: {e}"))?;
+    if !status.success() || !out.exists() {
+        return Err("remotion render failed — check Node + /remotion deps".into());
+    }
+    Ok(out.to_string_lossy().to_string())
+}
+
 
 #[tauri::command]
 fn export_session_edit(
@@ -479,6 +638,114 @@ fn export_session_edit(
     }
     log(&app, format!("Exported edit → {}", folder.to_string_lossy()));
     Ok(folder.to_string_lossy().to_string())
+}
+
+/// Render the automatic edit (the beat-aligned EDL of the session's REAL
+/// footage) into a single finished MP4 with the master song — the "auto-edit a
+/// complete video" counterpart to the fully-generated AI music video. Each EDL
+/// segment is cut from its source clip (seek + retime for slow-motion),
+/// conformed to a uniform 1920x1080 stream, then all segments are concatenated
+/// and the master audio is muxed in. Emits `autoedit:progress`; returns the
+/// final video path.
+#[tauri::command]
+fn render_session_edit(
+    session_id: i64,
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<String, String> {
+    let (session, segments, media, master) = {
+        let conn = state.conn.lock().unwrap();
+        let session = db::get_session(&conn, session_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "session not found".to_string())?;
+        let segments = db::list_edit_segments(&conn, session_id).map_err(|e| e.to_string())?;
+        let media = db::list_session_media(&conn, session_id).map_err(|e| e.to_string())?;
+        let master = media
+            .iter()
+            .find(|m| m.role == "master")
+            .map(|m| m.path.clone());
+        (session, segments, media, master)
+    };
+    if segments.is_empty() {
+        return Err("build the edit first".to_string());
+    }
+
+    let media_path: std::collections::HashMap<i64, String> =
+        media.iter().map(|m| (m.id, m.path.clone())).collect();
+
+    let out_dir = state
+        .work_dir()
+        .join("autoedit")
+        .join(session_id.to_string())
+        .join(nanos().to_string());
+    std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+
+    let total = segments.len() as u64;
+    let emit = |stage: &str, message: String, processed: u64, done: bool| {
+        let _ = app.emit(
+            "autoedit:progress",
+            serde_json::json!({
+                "sessionId": session_id,
+                "stage": stage,
+                "message": message,
+                "processed": processed,
+                "total": total,
+                "done": done,
+            }),
+        );
+    };
+
+    let fps = if session.sequence_fps.is_finite() && session.sequence_fps > 1.0 {
+        session.sequence_fps
+    } else {
+        24.0
+    };
+
+    let mut clips: Vec<std::path::PathBuf> = Vec::new();
+    let mut durations: Vec<f64> = Vec::new();
+    for (i, seg) in segments.iter().enumerate() {
+        emit("cut", format!("Cutting segment {}/{}…", i + 1, total), i as u64, false);
+        let src = match media_path.get(&seg.media_id) {
+            Some(p) if std::path::Path::new(p).exists() => p.clone(),
+            _ => continue,
+        };
+        let src_len = (seg.src_out - seg.src_in).max(0.1);
+        let tl = (seg.timeline_out - seg.timeline_in).max(0.2);
+        let dst = out_dir.join(format!("cut_{:04}.mp4", i));
+        if mvgen::cut_source_segment(
+            std::path::Path::new(&src),
+            &dst,
+            seg.src_in,
+            src_len,
+            seg.speed_pct,
+            fps,
+        ) {
+            clips.push(dst);
+            durations.push(tl);
+        }
+    }
+
+    if clips.is_empty() {
+        return Err("no source clips could be cut (check the footage files).".to_string());
+    }
+
+    emit("assemble", "Assembling the final edit…".into(), total, false);
+    let final_path = out_dir.join("auto_edit.mp4");
+    let audio_ref = master.as_deref().map(std::path::Path::new);
+    if !mvgen::assemble(&clips, &durations, audio_ref, &final_path, fps) {
+        return Err("failed to assemble the final edit.".to_string());
+    }
+    // Clean up the per-segment cut files (assemble removed its own temps).
+    for c in &clips {
+        let _ = std::fs::remove_file(c);
+    }
+
+    emit("done", "Auto-edit ready".into(), total, true);
+    log(
+        &app,
+        format!("Rendered auto-edit for session {session_id}: {} segments", durations.len()),
+    );
+    Ok(final_path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -559,6 +826,47 @@ fn capture_style_reference(
 /// Render a still image for a shot/B-roll. Prefers an installed engine model
 /// (FLUX / Qwen) when an AI Engine URL is configured in Settings, and falls
 /// back to the NVIDIA cloud image model otherwise. Returns the PNG bytes.
+/// Build a single artist "identity anchor" image reused across every performer
+/// shot of a music video so the same recognizable person/wardrobe appears
+/// throughout (instead of a different AI face per cut). Prefers the artist's
+/// real footage (first style keyframe); falls back to one synthesized hero
+/// portrait. Returns `None` when there is no footage and no generator available.
+fn build_identity_anchor(
+    settings: &AppSettings,
+    nvidia_key: &str,
+    style: &StyleReference,
+) -> Option<Vec<u8>> {
+    // 1) Prefer the artist's real footage: the first usable keyframe thumbnail.
+    for kf in &style.keyframes {
+        if let Ok(bytes) = std::fs::read(kf) {
+            if bytes.len() > 1024 {
+                return Some(bytes);
+            }
+        }
+    }
+
+    // 2) No footage → synthesize one consistent hero portrait and reuse it.
+    let artist = style
+        .artist
+        .as_deref()
+        .filter(|a| !a.trim().is_empty())
+        .unwrap_or("the performing artist");
+    let palette = if style.palette.is_empty() {
+        String::new()
+    } else {
+        format!(" Color palette: {}.", style.palette.join(", "))
+    };
+    let hero_prompt = format!(
+        "Cinematic hero portrait of {artist}, the music video's main performer. \
+         Clear recognizable face, consistent wardrobe, upper body, looking toward camera, \
+         dramatic key light. Visual style: {desc}.{palette} Photorealistic, filmic, \
+         anamorphic, shallow depth of field, 16:9 widescreen. \
+         No text, no words, no logo, no watermark.",
+        desc = style.descriptor,
+    );
+    render_still(settings, nvidia_key, &hero_prompt, 4096)
+}
+
 fn render_still(settings: &AppSettings, nvidia_key: &str, prompt: &str, seed: i64) -> Option<Vec<u8>> {
     if engine::is_configured(settings) {
         let model = if settings.image_model.trim().is_empty() {
@@ -611,6 +919,8 @@ fn edit_still(
 /// Turn a still into a moving clip. Prefers real image-to-video on the engine
 /// (LTX-2.3 / Wan2.2) when a video model is configured, otherwise renders the
 /// reliable local Ken Burns animation. Writes an MP4 to `out` and returns true.
+/// `bpm` + `beat_phase` (seconds from the clip start to the first downbeat)
+/// drive the beat-synced motion accent in the local animation fallback.
 #[allow(clippy::too_many_arguments)]
 fn render_clip(
     settings: &AppSettings,
@@ -622,6 +932,8 @@ fn render_clip(
     fps: f64,
     variant: u8,
     seed: i64,
+    bpm: f64,
+    beat_phase: f64,
 ) -> bool {
     if engine::is_configured(settings) && !settings.video_model.trim().is_empty() {
         let f = if fps.is_finite() && fps > 1.0 { fps } else { 24.0 };
@@ -667,7 +979,173 @@ fn render_clip(
         eprintln!("[hf-i2v] failed, using Ken Burns");
     }
 
-    genai::animate_still_local(img_path, out, seconds, fps, variant)
+    genai::animate_still_local(img_path, out, seconds, fps, variant, bpm, beat_phase)
+}
+
+/// True for AI-generated B-roll inserted into the session (tagged on insert) —
+/// we never treat it as a real take to extract references from.
+fn media_is_ai_broll(m: &SessionMedia) -> bool {
+    m.analysis
+        .as_ref()
+        .map(|a| a.labels.iter().any(|l| l.eq_ignore_ascii_case("ai b-roll")))
+        .unwrap_or(false)
+}
+
+/// Detect bad takes and extract one representative reference screenshot per
+/// performance/story take. Each take is analysed with `footage::analyze`
+/// (motion → camera shake, detail → blur, brightness → exposure); the best
+/// stable, sharp, well-exposed frame is saved as a JPEG. The top `caption_limit`
+/// usable frames are captioned by the VLM (grounded by the song lyrics) so we
+/// understand the concept. Returns the frames sorted best-first.
+fn collect_reference_frames(
+    session: &EditSession,
+    media: &[SessionMedia],
+    settings: &AppSettings,
+    out_dir: &std::path::Path,
+    caption_limit: usize,
+) -> Vec<ReferenceFrame> {
+    let _ = std::fs::create_dir_all(out_dir);
+    let lyrics = session.lyrics.as_deref();
+    let artist = session.artist.as_deref();
+
+    let mut frames: Vec<ReferenceFrame> = Vec::new();
+    for m in media.iter().filter(|m| {
+        m.kind == "video"
+            && matches!(m.role.as_str(), "performance" | "story")
+            && !media_is_ai_broll(m)
+    }) {
+        let duration = m.duration_seconds.unwrap_or(0.0);
+        let report = footage::analyze(std::path::Path::new(&m.path), duration)
+            .map(|p| p.take_report());
+
+        let (verdict, score, issues, best_time, usable) = match report {
+            Some(r) => {
+                let usable = !r.shaky && !r.soft && r.score >= 0.4;
+                (r.verdict, r.score, r.issues, r.best_time, usable)
+            }
+            None => (
+                "unknown".to_string(),
+                0.0,
+                Vec::new(),
+                (duration * 0.5).max(0.0),
+                false,
+            ),
+        };
+
+        // Extract the representative screenshot at the chosen timestamp.
+        let frame_file = out_dir.join(format!("ref_{}.jpg", m.id));
+        let frame_path =
+            if splitter::extract_thumbnail(std::path::Path::new(&m.path), best_time, &frame_file) {
+                Some(frame_file.to_string_lossy().to_string())
+            } else {
+                m.thumbnail_path.clone()
+            };
+
+        frames.push(ReferenceFrame {
+            media_id: m.id,
+            role: m.role.clone(),
+            filename: m.filename.clone(),
+            time: best_time,
+            frame_path,
+            verdict,
+            score,
+            usable,
+            issues,
+            caption: None,
+        });
+    }
+
+    // Best technical quality first — also the order we caption + seed B-roll.
+    frames.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // Caption the top usable frames (VLM is slow, so bound the calls).
+    let mut captioned = 0usize;
+    for f in frames.iter_mut() {
+        if captioned >= caption_limit {
+            break;
+        }
+        if !f.usable {
+            continue;
+        }
+        if let Some(path) = f.frame_path.clone() {
+            f.caption = ai::describe_frame(
+                std::path::Path::new(&path),
+                lyrics,
+                artist,
+                &settings.openai_api_key,
+                &settings.nim_api_key,
+                &settings.nim_model,
+            );
+            captioned += 1;
+        }
+    }
+
+    frames
+}
+
+/// Store/replace the song lyrics for a session (used to ground concept analysis
+/// and B-roll generation). Empty string clears them.
+#[tauri::command]
+fn set_session_lyrics(
+    session_id: i64,
+    lyrics: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    let conn = state.conn.lock().unwrap();
+    db::set_session_lyrics(&conn, session_id, &lyrics).map_err(|e| e.to_string())
+}
+
+/// Analyse the session's real footage: extract a representative reference
+/// screenshot per performance/story take, flag unusable takes (shaky / soft /
+/// poorly exposed) and caption the good ones together with the song lyrics so
+/// the user (and the B-roll generator) understands the visual concept.
+#[tauri::command]
+fn extract_reference_frames(
+    session_id: i64,
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<ReferenceFrame>, String> {
+    let (session, media, settings) = {
+        let conn = state.conn.lock().unwrap();
+        let session = db::get_session(&conn, session_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "session not found".to_string())?;
+        let media = db::list_session_media(&conn, session_id).map_err(|e| e.to_string())?;
+        let settings = state.load_settings(&conn);
+        (session, media, settings)
+    };
+
+    let out_dir = state.work_dir().join("refs").join(session_id.to_string());
+    let _ = app.emit(
+        "refframes:progress",
+        serde_json::json!({ "sessionId": session_id, "stage": "analyze", "done": false }),
+    );
+
+    let frames = collect_reference_frames(&session, &media, &settings, &out_dir, 8);
+
+    let bad = frames.iter().filter(|f| !f.usable).count();
+    let _ = app.emit(
+        "refframes:progress",
+        serde_json::json!({
+            "sessionId": session_id,
+            "stage": "done",
+            "done": true,
+            "total": frames.len(),
+            "unusable": bad,
+        }),
+    );
+    log(
+        &app,
+        format!(
+            "Reference frames: {} take(s), {bad} flagged as unusable",
+            frames.len()
+        ),
+    );
+    Ok(frames)
 }
 
 #[tauri::command]
@@ -693,8 +1171,32 @@ fn generate_broll(
 
     let key = genai::resolve_key(&settings);
     let style = genai::build_style_reference(&session, &media, 6);
+
+    // Ground the B-roll in the artist's REAL footage + the song concept: extract
+    // the best reference screenshots from good takes, read their concept with the
+    // VLM (using the lyrics), and (a) enrich the style descriptor and (b) seed the
+    // world anchor from a real frame so generated shots match the actual video.
+    let refs_dir = state.work_dir().join("refs").join(session_id.to_string());
+    let ref_frames = collect_reference_frames(&session, &media, &settings, &refs_dir, 3);
+    let captions: Vec<String> = ref_frames
+        .iter()
+        .filter_map(|f| f.caption.clone())
+        .collect();
+    let mut style = style;
+    style.descriptor =
+        genai::concept_descriptor(&style.descriptor, &captions, session.lyrics.as_deref());
+
+    // Seed the world anchor with the best usable real reference frame, so the
+    // first generated shot is an edit of actual footage (maximum coherence).
+    let seed_anchor: Option<Vec<u8>> = ref_frames
+        .iter()
+        .find(|f| f.usable && f.frame_path.is_some())
+        .and_then(|f| f.frame_path.as_ref())
+        .and_then(|p| std::fs::read(p).ok())
+        .filter(|b| b.len() > 1024);
+
     let n = count.clamp(1, 12) as usize;
-    let plans = genai::plan_broll(&style, &analysis, n);
+    let plans = genai::plan_broll(&style, &analysis, n, &captions);
     let total = plans.len() as u64;
 
     let out_dir = state.work_dir().join("broll").join(session_id.to_string());
@@ -713,6 +1215,13 @@ fn generate_broll(
             }),
         );
     };
+
+    // Visual "world anchor" for coherent B-roll: the first still establishes the
+    // color grade / film stock / lighting world; every later shot is rendered by
+    // editing that anchor into a new scene so the whole B-roll set feels like it
+    // belongs to one cohesive music video (instead of ten unrelated images).
+    // Seeded from a real reference frame when available.
+    let mut world_anchor: Option<Vec<u8>> = seed_anchor;
 
     for (i, plan) in plans.into_iter().enumerate() {
         emit(
@@ -736,7 +1245,29 @@ fn generate_broll(
             created_at: String::new(),
         };
 
-        if let Some(png) = render_still(&settings, &key, &plan.prompt, plan.seed) {
+        // Coherent B-roll: edit the established world anchor into this new shot
+        // (keeps a single consistent grade/lighting world). The first shot — and
+        // any edit failure — falls back to a fresh text-to-image render, which
+        // then becomes the anchor for the rest.
+        let still = match world_anchor.as_ref() {
+            Some(anchor) => {
+                let instr = format!(
+                    "Reimagine this scene as a new cinematic music-video B-roll shot: {}. \
+                     Keep the SAME color grade, film stock, lighting mood and overall world. \
+                     Visual style: {}. Filmic, anamorphic, shallow depth of field, 16:9 widescreen. \
+                     No text, no words, no logo, no watermark.",
+                    plan.idea, style.descriptor
+                );
+                edit_still(&settings, &key, anchor, &instr, plan.seed)
+                    .or_else(|| render_still(&settings, &key, &plan.prompt, plan.seed))
+            }
+            None => render_still(&settings, &key, &plan.prompt, plan.seed),
+        };
+
+        if let Some(png) = still {
+            if world_anchor.is_none() {
+                world_anchor = Some(png.clone());
+            }
             let img_path = out_dir.join(format!("img_{}_{}.png", i, nanos()));
             if std::fs::write(&img_path, &png).is_ok() {
                 cand.image_path = Some(img_path.to_string_lossy().to_string());
@@ -764,6 +1295,8 @@ fn generate_broll(
                     session.sequence_fps,
                     i as u8,
                     plan.seed,
+                    analysis.bpm,
+                    0.0,
                 );
                 if animated {
                     cand.video_path = Some(vid_path.to_string_lossy().to_string());
@@ -859,7 +1392,15 @@ fn generate_music_video(
         );
     };
 
+    // Identity anchor — reuse ONE artist reference across every performer shot
+    // so the same recognizable person appears throughout the video instead of a
+    // different AI face at each cut. Prefer the artist's real footage; otherwise
+    // synthesize a single hero portrait once and edit it into each scene.
+    emit("identity", "Locking the artist's look for visual coherence…".into(), 0, false);
+    let identity = build_identity_anchor(&settings, &key, &style);
+
     let mut clips: Vec<std::path::PathBuf> = Vec::new();
+    let mut durations: Vec<f64> = Vec::new();
     for shot in &shots {
         emit(
             "generate",
@@ -868,9 +1409,32 @@ fn generate_music_video(
             false,
         );
 
-        let png = match render_still(&settings, &key, &shot.prompt, shot.seed) {
-            Some(p) => p,
-            None => continue,
+        // Performer shots: place the SAME artist into the new scene by editing
+        // the identity anchor (keeps face/wardrobe consistent). Atmosphere shots
+        // stay pure text-to-image. Fall back to text-to-image if editing fails.
+        let png = if shot.performer {
+            let edited = identity.as_ref().and_then(|id| {
+                let instr = format!(
+                    "Place this exact same person — keep their face, identity and wardrobe \
+                     consistent — into a new cinematic music-video scene: {}. \
+                     Match this visual style: {}. Filmic, anamorphic, shallow depth of field, \
+                     16:9 widescreen. No text, no words, no logo, no watermark.",
+                    shot.idea, style.descriptor
+                );
+                edit_still(&settings, &key, id, &instr, shot.seed)
+            });
+            match edited {
+                Some(p) => p,
+                None => match render_still(&settings, &key, &shot.prompt, shot.seed) {
+                    Some(p) => p,
+                    None => continue,
+                },
+            }
+        } else {
+            match render_still(&settings, &key, &shot.prompt, shot.seed) {
+                Some(p) => p,
+                None => continue,
+            }
         };
         let img_path = out_dir.join(format!("shot_{:03}.png", shot.index));
         if std::fs::write(&img_path, &png).is_err() {
@@ -884,6 +1448,15 @@ fn generate_music_video(
             false,
         );
         let clip_path = out_dir.join(format!("shot_{:03}.mp4", shot.index));
+        // Phase (seconds) from this shot's start to the next downbeat, so the
+        // beat-synced motion accent lands exactly on the music.
+        let beat_phase = analysis
+            .beats
+            .iter()
+            .copied()
+            .find(|&b| b >= shot.start)
+            .map(|b| (b - shot.start).max(0.0))
+            .unwrap_or(0.0);
         if render_clip(
             &settings,
             &img_path,
@@ -894,8 +1467,11 @@ fn generate_music_video(
             session.sequence_fps,
             shot.motion,
             shot.seed,
+            analysis.bpm,
+            beat_phase,
         ) {
             clips.push(clip_path);
+            durations.push(shot.duration);
         }
     }
 
@@ -906,7 +1482,7 @@ fn generate_music_video(
     emit("assemble", "Assembling the final music video…".into(), total, false);
     let final_path = out_dir.join("music_video.mp4");
     let audio_ref = master.as_deref().map(std::path::Path::new);
-    if !mvgen::assemble(&clips, audio_ref, &final_path, session.sequence_fps) {
+    if !mvgen::assemble(&clips, &durations, audio_ref, &final_path, session.sequence_fps) {
         return Err("Failed to assemble the final video.".into());
     }
 
@@ -1119,6 +1695,8 @@ fn insert_broll(
             secs,
             session.sequence_fps,
             (candidate_id % 4) as u8,
+            0.0,
+            0.0,
         ) {
             return Err("could not animate the image to a clip (ffmpeg)".to_string());
         }
@@ -1245,6 +1823,8 @@ fn animate_broll(
         secs,
         session.sequence_fps,
         (candidate_id % 4) as u8,
+        0.0,
+        0.0,
     ) {
         return Err("could not animate the image to a clip (ffmpeg)".to_string());
     }
@@ -1680,6 +2260,7 @@ pub fn run() {
             list_edit_sessions,
             get_edit_session,
             delete_edit_session,
+            rename_edit_session,
             list_session_media,
             add_session_media,
             set_session_media_role,
@@ -1691,11 +2272,18 @@ pub fn run() {
             get_master_analysis,
             build_session_edl,
             list_session_edl,
+            run_edit_agent,
+            apply_edit_suggestion,
+            list_edit_effects,
+            render_effect_preview,
             export_session_edit,
+            render_session_edit,
             get_edit_profile,
             update_edit_profile,
             record_edit_feedback,
             capture_style_reference,
+            extract_reference_frames,
+            set_session_lyrics,
             generate_broll,
             generate_music_video,
             ai_engine_status,
