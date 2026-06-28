@@ -212,6 +212,64 @@
         justify-content: center;
         flex-wrap: wrap;
       }
+      .req {
+        margin-top: 18px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      /* ---- Download section ---- */
+      .dl-buttons {
+        display: flex;
+        gap: 16px;
+        justify-content: center;
+        flex-wrap: wrap;
+        margin-top: 8px;
+      }
+      .dl {
+        display: inline-flex;
+        align-items: center;
+        gap: 13px;
+        padding: 16px 26px;
+        border-radius: 14px;
+        border: 1px solid var(--border);
+        background: var(--surface2);
+        color: var(--fg);
+        min-width: 230px;
+        transition: transform 0.15s ease, border-color 0.15s ease,
+          box-shadow 0.2s ease;
+      }
+      .dl:hover {
+        transform: translateY(-2px);
+        border-color: #3a424e;
+      }
+      .dl svg {
+        width: 28px;
+        height: 28px;
+        flex: none;
+      }
+      .dl .lbl {
+        text-align: left;
+        line-height: 1.2;
+      }
+      .dl .lbl small {
+        display: block;
+        font-size: 11.5px;
+        color: var(--muted);
+        font-weight: 500;
+      }
+      .dl .lbl b {
+        font-size: 16px;
+        font-weight: 700;
+      }
+      .dl.primary {
+        background: linear-gradient(135deg, var(--accent), var(--accent2));
+        border-color: transparent;
+        color: #160a02;
+        box-shadow: 0 12px 30px rgba(255, 106, 43, 0.3);
+      }
+      .dl.primary .lbl small {
+        color: rgba(22, 10, 2, 0.7);
+      }
       /* ---- Stat strip ---- */
       .stats {
         display: grid;
@@ -627,7 +685,7 @@
           <nav class="nav-links">
             <a href="#what">What is it</a>
             <a href="#how">How it works</a>
-            <a href="#unique">Why MotionDNA</a>
+            <a href="#download">Download</a>
             <a href="#beta" class="btn primary sm">Join Early Access</a>
           </nav>
         </div>
@@ -646,14 +704,15 @@
             choreography and stage energy — without filming a single take.
           </p>
           <div class="hero-cta">
-            <a href="#beta" class="btn primary">Join Early Access</a>
-            <a href="#how" class="btn">
+            <a href="#download" class="btn primary">
               <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M8 5v14l11-7z" />
+                <path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
-              Watch Demo
+              Download App
             </a>
+            <a href="#beta" class="btn">Join Early Access</a>
           </div>
+          <p class="req">Available for macOS and Windows · Free download</p>
 
           <div class="stats">
             <div class="stat">
@@ -894,6 +953,60 @@
           </div>
         </section>
 
+        <!-- DOWNLOAD -->
+        <section class="block" id="download">
+          <p class="eyebrow">Get the app</p>
+          <h2>Download Boostify for desktop</h2>
+          <p class="lead">
+            Run MotionDNA on your own machine. Native apps for macOS and Windows
+            — free to download.
+          </p>
+          <div class="dl-buttons">
+            <a
+              class="dl primary"
+              id="dl-mac"
+              href="https://github.com/qbanito/boostifymodel/releases/latest"
+              target="_blank"
+              rel="noopener"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M16.365 1.43c0 1.14-.467 2.22-1.222 3.01-.81.85-2.13 1.51-3.243 1.42-.13-1.09.41-2.24 1.16-2.99.82-.83 2.24-1.45 3.305-1.44zM20.5 17.06c-.57 1.31-.84 1.89-1.57 3.05-1.02 1.62-2.46 3.64-4.24 3.65-1.58.02-1.99-1.04-4.14-1.03-2.15.01-2.6 1.05-4.18 1.04-1.78-.01-3.14-1.83-4.16-3.45-2.85-4.53-3.15-9.85-1.39-12.68 1.25-2.01 3.23-3.19 5.09-3.19 1.89 0 3.08 1.04 4.64 1.04 1.52 0 2.44-1.04 4.64-1.04 1.66 0 3.42.9 4.67 2.46-4.1 2.25-3.44 8.11.04 9.65z"
+                />
+              </svg>
+              <span class="lbl">
+                <small>Download for</small><b>macOS</b>
+              </span>
+            </a>
+            <a
+              class="dl"
+              id="dl-win"
+              href="https://github.com/qbanito/boostifymodel/releases/latest"
+              target="_blank"
+              rel="noopener"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M3 5.1 10.5 4v7.5H3V5.1zM10.5 12.5V20L3 18.9V12.5h7.5zM11.5 3.85 21 2.5v9H11.5V3.85zM21 12.5V21.5l-9.5-1.35V12.5H21z"
+                />
+              </svg>
+              <span class="lbl">
+                <small>Download for</small><b>Windows (PC)</b>
+              </span>
+            </a>
+          </div>
+          <p class="req" style="text-align: center">
+            macOS 11+ · Windows 10 / 11 (64-bit) · Builds are published on
+            <aa
+              href="https://github.com/qbanito/boostifymodel/releases"
+              target="_blank"
+              rel="noopener"
+              style="color: var(--info)"
+              >GitHub Releases</a
+            >.
+          </p>
+        </section>
+
         <!-- BETA FORM -->
         <section class="block" id="beta">
           <div class="beta">
@@ -979,6 +1092,21 @@
       window.addEventListener("scroll", function () {
         hdr.classList.toggle("scrolled", window.scrollY > 8);
       });
+
+      // Highlight the download button matching the visitor's OS.
+      (function () {
+        var ua = navigator.userAgent || "";
+        var plat = navigator.platform || "";
+        var isWindows = /Win/i.test(plat) || /Windows/i.test(ua);
+        var isMac = /Mac/i.test(plat) || /Mac OS X/i.test(ua);
+        var mac = document.getElementById("dl-mac");
+        var win = document.getElementById("dl-win");
+        if (mac && win && isWindows && !isMac) {
+          win.classList.add("primary");
+          mac.classList.remove("primary");
+          win.parentNode.insertBefore(win, mac);
+        }
+      })();
 
       // Beta form handling.
       // To collect submissions, set FORM_ENDPOINT to a Formspree (or similar)
