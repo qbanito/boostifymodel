@@ -87,6 +87,7 @@ export function Editor() {
   const [newArtist, setNewArtist] = useState("");
   const [newFps, setNewFps] = useState(24);
   const [busy, setBusy] = useState(false);
+  const [proxyBusy, setProxyBusy] = useState(false);
   const [progress, setProgress] = useState<SessionProgress | null>(null);
   const [analysis, setAnalysis] = useState<MasterAnalysis | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
@@ -434,6 +435,11 @@ export function Editor() {
         if (!mounted) return;
         if (activeId != null && p.sessionId === activeId) {
           setProgress(p.done ? null : p);
+          if (p.done && p.stage === "proxy") {
+            setProxyBusy(false);
+            loadMedia(activeId);
+            push("success", "Proxies listos · preview fluida");
+          }
         }
       })
       .then((un) => {
@@ -501,6 +507,24 @@ export function Editor() {
       setProgress(null);
     }
   };
+
+  const generateProxies = async () => {
+    if (!active) return;
+    const pending = media.filter((m) => m.kind === "video" && !m.proxyPath).length;
+    if (pending === 0) {
+      push("info", "Todos los clips ya tienen proxy");
+      return;
+    }
+    setProxyBusy(true);
+    try {
+      await api.generateSessionProxies(active.id);
+      push("info", `Generando ${pending} proxy(s) 720p en segundo plano…`);
+    } catch (e) {
+      setProxyBusy(false);
+      push("error", String(e));
+    }
+  };
+
 
   const analyzeMaster = async () => {
     if (!active) return;
@@ -1111,6 +1135,20 @@ export function Editor() {
                 <Plus className="h-4 w-4" />
               )}
               Add media
+            </Button>
+            <Button
+              variant="secondary"
+              size="xs"
+              onClick={generateProxies}
+              disabled={proxyBusy || media.filter((m) => m.kind === "video").length === 0}
+              title="Genera proxies 720p para una preview fluida (no toca los 4K originales)"
+            >
+              {proxyBusy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Gauge className="h-4 w-4" />
+              )}
+              Proxies
             </Button>
             <Button
               variant="default"
@@ -2232,7 +2270,8 @@ function EdlPlayer({
   const total = edl.length > 0 ? edl[edl.length - 1].timelineOut : 0;
   const masterUrl = masterPath ? convertFileSrc(masterPath) : null;
   const clipUrl = (id: number) => {
-    const p = media.find((m) => m.id === id)?.path;
+    const m = media.find((m) => m.id === id);
+    const p = m?.proxyPath ?? m?.path;
     return p ? convertFileSrc(p) : null;
   };
 

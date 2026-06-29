@@ -340,6 +340,8 @@ pub struct SessionMedia {
     pub note: Option<String>,
     pub analysis: Option<SceneAnalysis>,
     pub thumbnail_path: Option<String>,
+    /// Lightweight 720p proxy for smooth scrub/preview (master stays untouched).
+    pub proxy_path: Option<String>,
     pub created_at: String,
 }
 

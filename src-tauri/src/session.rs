@@ -110,6 +110,7 @@ pub fn ingest_paths(
             note: None,
             analysis: None,
             thumbnail_path: None,
+            proxy_path: None,
             created_at: String::new(),
         };
 

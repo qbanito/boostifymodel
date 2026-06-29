@@ -225,6 +225,10 @@ export const api = {
     return invoke("delete_session_media", { mediaId });
   },
 
+  generateSessionProxies(sessionId: number): Promise<void> {
+    return invoke("generate_session_proxies", { sessionId });
+  },
+
   analyzeMasterAudio(sessionId: number): Promise<MasterAnalysis> {
     return invoke("analyze_master_audio", { sessionId });
   },

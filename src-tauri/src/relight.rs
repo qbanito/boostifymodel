@@ -174,6 +174,7 @@ pub fn relight_clip(
         )),
         analysis: Some(analysis),
         thumbnail_path,
+        proxy_path: None,
         created_at: String::new(),
     };
 

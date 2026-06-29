@@ -396,6 +396,72 @@ fn delete_session_media(
     db::delete_session_media(&conn, media_id).map_err(|e| e.to_string())
 }
 
+/// Build lightweight 720p proxies for every video clip in a session so the
+/// preview scrubs smoothly. Originals (4K master) are never touched. Runs in a
+/// background thread and emits `session:progress` events.
+#[tauri::command]
+fn generate_session_proxies(
+    session_id: i64,
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    let state = state.inner().clone();
+    std::thread::spawn(move || {
+        let work_dir = state.work_dir();
+        let proxy_dir = work_dir.join("session_proxies");
+        let _ = std::fs::create_dir_all(&proxy_dir);
+
+        let media = {
+            let conn = state.conn.lock().unwrap();
+            db::list_session_media(&conn, session_id).unwrap_or_default()
+        };
+        // Only videos missing a valid proxy.
+        let todo: Vec<SessionMedia> = media
+            .into_iter()
+            .filter(|m| m.kind == "video")
+            .filter(|m| {
+                m.proxy_path
+                    .as_ref()
+                    .map(|p| !std::path::Path::new(p).exists())
+                    .unwrap_or(true)
+            })
+            .collect();
+        let total = todo.len() as u64;
+
+        for (i, m) in todo.iter().enumerate() {
+            let _ = app.emit(
+                "session:progress",
+                SessionProgress {
+                    session_id,
+                    stage: "proxy".into(),
+                    message: format!("Proxy {}", m.filename),
+                    processed: i as u64,
+                    total,
+                    done: false,
+                },
+            );
+            let out = proxy_dir.join(format!("s{}_m{}_720.mp4", session_id, m.id));
+            if splitter::make_proxy(std::path::Path::new(&m.path), &out) {
+                let conn = state.conn.lock().unwrap();
+                let _ = db::set_media_proxy(&conn, m.id, &out.to_string_lossy());
+            }
+        }
+
+        let _ = app.emit(
+            "session:progress",
+            SessionProgress {
+                session_id,
+                stage: "proxy".into(),
+                message: "Proxies ready".into(),
+                processed: total,
+                total,
+                done: true,
+            },
+        );
+    });
+    Ok(())
+}
+
 #[tauri::command]
 fn analyze_master_audio(
     session_id: i64,
@@ -1758,6 +1824,7 @@ fn insert_broll(
         note: Some(format!("Generated B-roll for the {} section", cand.section)),
         analysis: Some(analysis),
         thumbnail_path,
+        proxy_path: None,
         created_at: String::new(),
     };
 
@@ -2265,6 +2332,7 @@ pub fn run() {
             add_session_media,
             set_session_media_role,
             delete_session_media,
+            generate_session_proxies,
             humo::humo_generate,
             humo::humo_status,
             relight::relight_clip,

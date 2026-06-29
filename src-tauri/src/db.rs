@@ -163,6 +163,11 @@ pub fn init(conn: &Connection) -> Result<()> {
         "ALTER TABLE session_media ADD COLUMN sync_confidence REAL",
         [],
     );
+    // 720p proxy path for smooth preview/scrub of heavy 4K source.
+    let _ = conn.execute(
+        "ALTER TABLE session_media ADD COLUMN proxy_path TEXT",
+        [],
+    );
     Ok(())
 }
 
@@ -788,8 +793,18 @@ fn row_to_session_media(r: &rusqlite::Row) -> rusqlite::Result<SessionMedia> {
         note: r.get("note")?,
         analysis,
         thumbnail_path: r.get("thumbnail_path")?,
+        proxy_path: r.get("proxy_path").ok().flatten(),
         created_at: r.get("created_at")?,
     })
+}
+
+/// Store the proxy path for a media clip.
+pub fn set_media_proxy(conn: &Connection, media_id: i64, proxy_path: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE session_media SET proxy_path=?1 WHERE id=?2",
+        params![proxy_path, media_id],
+    )?;
+    Ok(())
 }
 
 /// Store the computed lip-sync alignment of a performance clip to the master.

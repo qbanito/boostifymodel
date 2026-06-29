@@ -93,6 +93,31 @@ pub fn extract_thumbnail(src: &Path, time: f64, out: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Generate a lightweight 720p H.264 proxy for smooth preview/scrub.
+/// The original 4K source is never modified. Returns true on success.
+pub fn make_proxy(src: &Path, out: &Path) -> bool {
+    if let Some(parent) = out.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    Command::new(ffmpeg_bin())
+        .args(["-hide_banner", "-loglevel", "error", "-y", "-i"])
+        .arg(src)
+        .args([
+            "-vf", "scale=-2:720",
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "26",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-movflags", "+faststart",
+        ])
+        .arg(out)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 /// Sample an 8x8 grayscale frame and return the 64 luma bytes.
 /// This is the backbone of both the average-hash and the quality probe.
 fn sample_8x8(src: &Path, time: f64) -> Option<Vec<u8>> {

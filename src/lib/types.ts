@@ -196,6 +196,7 @@ export interface SessionMedia {
   note: string | null;
   analysis: SceneAnalysis | null;
   thumbnailPath: string | null;
+  proxyPath: string | null;
   createdAt: string;
 }
 
